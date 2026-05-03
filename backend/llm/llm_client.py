@@ -1,0 +1,414 @@
+"""
+LLM client — OpenAI-compatible SDK pointed at Groq (or any provider).
+Swap provider by changing LLM_BASE_URL + LLM_API_KEY + LLM_MODEL in .env.
+No other code changes required.
+"""
+from openai import OpenAI
+from config import Config
+
+# ---------------------------------------------------------------------------
+# Client singleton
+# ---------------------------------------------------------------------------
+
+def _get_client() -> OpenAI:
+    return OpenAI(
+        api_key=Config.LLM_API_KEY,
+        base_url=Config.LLM_BASE_URL,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prompt templates
+# ---------------------------------------------------------------------------
+
+CONTINUATION_SYSTEM = """\
+You are a post-market analyst for a small-cap day trader focused on gap-and-go setups.
+Your job is to produce a structured nightly continuation report based on that day's top gainers.
+
+The trader's historical data shows these patterns work best for continuation:
+- Float < 10M with RVOL > 5x: highest continuation rate
+- Fresh catalyst (news_fresh=True): +30% more likely to hold overnight
+- Gap > 30% on volume > 10x average: strong momentum signal
+- Healthcare/Biotech sector on FDA/trial news: binary catalyst, beware fade risk
+- Gap-and-hold (steady price action, no sharp reversal after open): continuation signal
+- Gap-and-fade (sharp selloff within 30 min of open): avoid next day
+
+For each ticker, output the following exact structure:
+
+### [TICKER] — [Continuation Rating: 🟢 HIGH / 🟡 MEDIUM / 🔴 LOW / ⚫ AVOID]
+
+| Field | Value |
+|---|---|
+| Gap % | X.X% |
+| Float | X.XM |
+| RVOL | Xx |
+| Sector | ... |
+| Catalyst | Fresh / Stale / Unknown |
+
+**Thesis**: [2–3 sentences: why this rating, what to watch for]
+**Key Risk**: [1 sentence]
+**Watch Level**: [price level to watch at open, or "N/A"]
+
+---
+
+End the report with:
+
+## 🏆 Top Picks for Continuation Watch
+Ranked list of the top 3 tickers with the strongest case, and one sentence each.
+
+## ⚠️ Avoid List
+Any tickers that are likely to fade or have high risk, with one reason each.
+
+## Market Context
+One paragraph summarizing the overall tape quality for the day based on these names.
+
+Be direct and concise. No filler. No disclaimers. This is a private trading tool.
+"""
+
+SENTIMENT_SYSTEM = """\
+You are a trading journal analyst.
+You answer questions about market conditions and setup quality grounded in the user's own journal data.
+Only reference patterns present in the provided archetype stats. Do not add generic market commentary.
+Be direct, concise, and quantitative where possible.
+"""
+
+DEEP_ANALYSIS_SYSTEM = """\
+You are a senior quantitative and technical analyst producing a deep-dive report on the top daily gainers.
+For each of the top 3 gainers provided, analyze their technicals (SMAs, RSI, price action) and fundamentals/catalysts.
+
+Format each stock as:
+
+### [TICKER] — Deep Analysis
+**Technicals**:
+- [RSI/SMA breakdown]
+- [Price action / Volume profile]
+**Catalyst & Fundamentals**:
+- [Breaking news, earnings, FDA, etc.]
+- [Float/Market Cap implications]
+**Continuation Thesis**:
+- [Bull case for tomorrow]
+- [Bear case / Fade risk]
+
+Conclude the report with a brief summary of what to watch for tomorrow. Keep it professional, insightful, and concise. No fluff.
+"""
+
+NEWS_FRESH_SYSTEM = """\
+You classify stock news headlines as FRESH or STALE.
+FRESH = catalyst is new today (earnings beat/miss, FDA approval/rejection, contract win, merger, clinical trial result, regulatory approval).
+STALE = recycled news, no new catalyst, general sector hype, price target updates, analyst upgrades without new data.
+Reply with exactly one word: FRESH or STALE.\
+"""
+
+
+# ---------------------------------------------------------------------------
+# Public functions
+# ---------------------------------------------------------------------------
+
+def get_continuation_analysis(date: str, gainers: list[dict],
+                               archetype_stats: list[dict] | None = None) -> tuple[str, str]:
+    """
+    Given a date and list of top-10 gainer dicts, return a markdown continuation report.
+    Optionally grounds the report in historical archetype_stats from the journal.
+    Returns (report_text, model_name).
+    """
+    rows_md = "\n".join(
+        f"- **{g['ticker']}**: gap={g.get('gap_pct', '?')}%, "
+        f"float={_fmt_float(g.get('float_shares'))}, "
+        f"rvol={g.get('rvol_15m', '?')}x, "
+        f"sector={g.get('sector', '?')}, "
+        f"open=${g.get('open_price', '?')}, close=${g.get('close_price', '?')}, "
+        f"news_fresh={g.get('news_fresh', '?')}, "
+        f"headline: {g.get('news_headline') or 'N/A'}"
+        for g in gainers
+    )
+
+    # Add historical grounding if we have archetype data
+    history_context = ""
+    if archetype_stats:
+        history_context = "\n\nHistorical archetype stats from this trader's journal:\n" + "\n".join(
+            f"- {s['tag']}: {s['count']} trades, "
+            f"avg_gap={s.get('avg_gap_pct')}%, "
+            f"avg_rvol={s.get('avg_rvol')}x, "
+            f"avg_cleanliness={s.get('avg_cleanliness')}/10"
+            for s in (archetype_stats or [])
+        )
+
+    user_msg = (
+        f"Date: {date}\n\n"
+        f"Today's top gainers (sorted by gap %):\n{rows_md}"
+        f"{history_context}\n\n"
+        "Produce the full nightly continuation report now."
+    )
+
+    result = _chat(CONTINUATION_SYSTEM, user_msg, max_tokens=2048)
+    return result, Config.LLM_MODEL
+
+
+
+def get_sentiment_analysis(query: str, archetype_stats: list[dict]) -> tuple[str, str]:
+    """
+    Answer a free-form research query grounded in the user's archetype stats.
+    Returns (response_text, model_name).
+    """
+    stats_md = "\n".join(
+        f"- {s['tags']}: count={s.get('count')}, "
+        f"avg_gap={s.get('avg_gap_pct')}%, "
+        f"avg_clean={s.get('avg_cleanliness')}"
+        for s in archetype_stats
+    ) or "No archetype data yet."
+
+    user_msg = (
+        f"Journal archetype stats:\n{stats_md}\n\n"
+        f"User question: {query}"
+    )
+
+    result = _chat(SENTIMENT_SYSTEM, user_msg)
+    return result, Config.LLM_MODEL
+
+
+def get_deep_analysis_report(date: str, deep_data: list[dict]) -> tuple[str, str]:
+    """
+    Given detailed technical and fundamental data for the top 3 gainers,
+    returns a comprehensive deep analysis report.
+    Returns (report_text, model_name).
+    """
+    rows_md = ""
+    for g in deep_data:
+        rows_md += f"\n- **{g['ticker']}**:\n"
+        for k, v in g.items():
+            if k != 'ticker':
+                rows_md += f"  - {k}: {v}\n"
+
+    user_msg = (
+        f"Date: {date}\n\n"
+        f"Detailed Data for Top 3 Gainers:\n{rows_md}\n"
+        "Produce the deep technical and fundamental analysis report now."
+    )
+
+    result = _chat(DEEP_ANALYSIS_SYSTEM, user_msg, max_tokens=2500)
+    return result, Config.LLM_MODEL
+
+
+def classify_news_fresh(headline: str) -> bool:
+    """
+    Returns True if the headline is classified as FRESH catalyst.
+    Falls back to False on API error.
+    """
+    if not headline or not Config.LLM_API_KEY:
+        return False
+    try:
+        result = _chat(NEWS_FRESH_SYSTEM, f"Headline: {headline}", max_tokens=5)
+        return result.strip().upper().startswith('FRESH')
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _chat(system: str, user: str, max_tokens: int = 1024) -> str:
+    client = _get_client()
+    response = client.chat.completions.create(
+        model=Config.LLM_MODEL,
+        messages=[
+            {'role': 'system',  'content': system},
+            {'role': 'user',    'content': user},
+        ],
+        max_tokens=max_tokens,
+        temperature=0.3,
+    )
+    return response.choices[0].message.content.strip()
+
+
+def _fmt_float(shares) -> str:
+    if shares is None:
+        return '?'
+    m = shares / 1e6
+    return f"{m:.1f}M"
+
+
+DEEP_RESEARCH_SYSTEM = """
+You are a senior Equity Research Analyst specializing in high-volatility small-cap stocks and catalysts. 
+Your goal is to provide a comprehensive "Deep Dive" on a specific ticker based on provided data.
+
+Focus on:
+1. **Fundamental Health**: EPS trends, cash position, and valuation context.
+2. **Ownership Structure**: Are institutions buying or selling? Is there high short interest?
+3. **Corporate Actions**: Watch for recent reverse splits or toxic financing.
+4. **Catalysts**: Analyze recent news headlines and upcoming earnings dates.
+5. **Technical Context**: Key SMA levels and RSI.
+
+Structure your report with:
+- **Executive Summary & Verdict**
+- **The Data (Fundamentals & Ownership)**
+- **Recent Catalysts & News Analysis**
+- **Risks & Red Flags**
+- **Conclusion & Potential Action**
+"""
+
+
+def get_ticker_deep_research(ticker: str, data: dict) -> tuple[str, str]:
+    """Perform a deep research analysis using gathered yfinance data."""
+    import json
+    user_msg = f"Ticker: {ticker}\nData Snapshot:\n{json.dumps(data, indent=2)}"
+    result = _chat(DEEP_RESEARCH_SYSTEM, user_msg, max_tokens=3000)
+    return result, Config.LLM_MODEL
+
+
+# ---------------------------------------------------------------------------
+# Risk Detection
+# ---------------------------------------------------------------------------
+
+RISK_DETECTION_SYSTEM = """\
+You are a forensic equity analyst specializing in structural risk identification for small-cap and micro-cap stocks.
+You are given raw data from SEC filings, short interest data, insider transactions, and corporate actions.
+
+Your job is to produce a structured Risk Report that a day trader can act on immediately.
+Classify each risk factor as: 🔴 HIGH / 🟡 MEDIUM / 🟢 LOW / ⚪ N/A.
+Be direct. Do not hedge. Do not add disclaimers.
+
+Output EXACTLY this format:
+
+## 🚨 Risk Report: [TICKER]
+### Overall Risk Score: [1–10] (10 = most dangerous)
+
+| Risk Factor | Status | Severity | Detail |
+|---|---|---|---|
+| Reverse Split History | [Yes/No + dates] | 🔴/🟡/🟢 | [ratio, how recent] |
+| Active Shelf Registration (S-3) | [Yes/No + date] | 🔴/🟡/🟢 | [amount if known] |
+| Recent ATM/424B Offering | [Yes/No + date] | 🔴/🟡/🟢 | [proceeds if known] |
+| Toxic Financing Detected | [Yes/No] | 🔴/🟡/🟢 | [filing type, keyword matched] |
+| Short % of Float | [X%] | 🔴/🟡/🟢 | [>20%=high, 10-20%=medium] |
+| Days to Cover | [X days] | 🔴/🟡/🟢 | [>10=squeeze trap risk] |
+| Insider Activity (90d) | [Net buy/sell shares] | 🔴/🟡/🟢 | [brief summary] |
+| Cash Position | [$X or Unknown] | 🔴/🟡/🟢 | [runway concern if <6mo] |
+| Share Dilution Trend | [Flat/Increasing/Unknown] | 🔴/🟡/🟢 | [recent share count change] |
+
+### 🧠 Risk Summary
+[2–3 sentences: overall verdict, which risks are most actionable, what the trader should watch]
+
+### ⚡ Immediate Action
+[One sentence: what this means RIGHT NOW for a trader considering this stock]
+"""
+
+
+def get_risk_analysis(ticker: str, data: dict) -> tuple[str, str]:
+    """Produce a structured Risk Detection report from gathered risk signals."""
+    import json
+    user_msg = (
+        f"Ticker: {ticker}\n\n"
+        f"Risk Signal Data:\n{json.dumps(data, indent=2, default=str)}"
+    )
+    result = _chat(RISK_DETECTION_SYSTEM, user_msg, max_tokens=2000)
+    return result, Config.LLM_MODEL
+
+
+# ---------------------------------------------------------------------------
+# Catalyst Analysis
+# ---------------------------------------------------------------------------
+
+CATALYST_ANALYSIS_SYSTEM = """\
+You are a catalyst quality analyst for a momentum day trader focused on small-cap gap stocks.
+Your job: determine whether this ticker's recent price move has a real, durable catalyst or is likely to fade.
+
+You are given: recent news, SEC 8-K filings, earnings calendar, and analyst activity.
+Analyze the freshness, specificity, and durability of the catalyst narrative.
+
+Classify the catalyst as:
+🟢 TIER 1 — Binary event with clear resolution (FDA approval/rejection, earnings surprise, acquisition, clinical trial result)
+🟡 TIER 2 — Soft catalyst (contract win, partnership, MOU, analyst upgrade with new data)
+🔴 TIER 3 — No real catalyst (vague press release, general sector hype, price target update, unknown)
+
+Output EXACTLY this format:
+
+## ⚡ Catalyst Report: [TICKER]
+### Catalyst Tier: [🟢 TIER 1 / 🟡 TIER 2 / 🔴 TIER 3]
+
+| Field | Value |
+|---|---|
+| Primary Catalyst | [headline or "None identified"] |
+| Catalyst Date | [YYYY-MM-DD or "Unknown"] |
+| Catalyst Freshness | [FRESH / STALE / UNKNOWN] |
+| Catalyst Type | [FDA / Earnings / Contract / Partnership / Other / None] |
+| Expected Duration | [Intraday / 1–3 days / Multi-week / Binary] |
+| Next Earnings Date | [date or "Unknown"] |
+
+### 📰 News & Filing Summary
+[Bullet points: 3–5 most relevant news items or SEC items, each 1 line]
+
+### 🔬 Catalyst Quality Assessment
+[2–3 sentences: Why this tier? Is the narrative specific and verifiable? What's the resolution event?]
+
+### ⚠️ Risk to Catalyst Thesis
+[1–2 sentences: What could invalidate or reverse the narrative?]
+"""
+
+
+def get_catalyst_analysis(ticker: str, data: dict) -> tuple[str, str]:
+    """Produce a structured Catalyst Analysis report from gathered news and filing data."""
+    import json
+    user_msg = (
+        f"Ticker: {ticker}\n\n"
+        f"Catalyst Signal Data:\n{json.dumps(data, indent=2, default=str)}"
+    )
+    result = _chat(CATALYST_ANALYSIS_SYSTEM, user_msg, max_tokens=2000)
+    return result, Config.LLM_MODEL
+
+
+# ---------------------------------------------------------------------------
+# Deep Context
+# ---------------------------------------------------------------------------
+
+DEEP_CONTEXT_SYSTEM = """\
+You are a quantitative setup scorer for a small-cap momentum trader.
+You receive multi-timeframe technical data, float structure, relative strength vs SPY,
+options sentiment, and the stock's own historical gainer appearances from a personal trading journal.
+
+Your job: synthesize everything into a unified Setup Score and actionable playbook.
+The trader wants to know: IS THIS A REAL SETUP or noise?
+
+Output EXACTLY this format:
+
+## 📊 Deep Context: [TICKER]
+### Setup Score: [1–10] | Conviction: [LOW / MEDIUM / HIGH]
+
+**Technical Picture**:
+| Indicator | Value | Signal |
+|---|---|---|
+| Price vs SMA 20 | [above/below by X%] | 🟢/🔴 |
+| Price vs SMA 50 | [above/below by X%] | 🟢/🔴 |
+| Price vs SMA 200 | [above/below by X%] | 🟢/🔴 |
+| 52-Week Range Position | [X% of range] | 🟢/🟡/🔴 |
+| RS vs SPY (20d) | [X.Xx] | 🟢/🔴 |
+| Options Sentiment | [FEAR / GREED / NEUTRAL] | 🔴/🟢/⚪ |
+
+**Float & Structure**:
+- Float: [XM shares]
+- Float Rotation: [X days at avg volume]
+- Shares trend: [diluting / stable / unknown]
+
+**Journal History** ([N] prior appearances):
+[Bullet: most recent gap events for this ticker from the journal, with dates and gap %, max 5]
+
+**The Playbook**:
+| Scenario | Trigger | Target | Stop |
+|---|---|---|---|
+| Bull case | [specific trigger] | [+X% or price level] | [stop condition] |
+| Bear case | [specific trigger] | [fade target] | [invalidation] |
+
+### 🎯 Bottom Line
+[1–2 sentences. Be direct. Is this worth trading? What's the edge?]
+"""
+
+
+def get_deep_context(ticker: str, data: dict) -> tuple[str, str]:
+    """Produce a structured Deep Context report from technical, structural, and historical data."""
+    import json
+    user_msg = (
+        f"Ticker: {ticker}\n\n"
+        f"Context Data:\n{json.dumps(data, indent=2, default=str)}"
+    )
+    result = _chat(DEEP_CONTEXT_SYSTEM, user_msg, max_tokens=2500)
+    return result, Config.LLM_MODEL
+

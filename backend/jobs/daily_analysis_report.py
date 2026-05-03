@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+Daily deep analysis report job.
+Queries the database for today's top gainers, runs a continuation/catalyst analysis
+on the top 10, does a deep technical dive on the top 3, and emails the result.
+
+Triggered by cron at 8:00 PM Mon–Fri:
+  0 20 * * 1-5 /home/jack/Documents/StockAnalysis/trading-journal/venv/bin/python /home/jack/Documents/StockAnalysis/trading-journal/backend/jobs/daily_analysis_report.py
+
+Usage:
+  python daily_analysis_report.py [--date 2026-05-01] [--dry-run]
+"""
+
+import sys
+import os
+import argparse
+import logging
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import date as date_cls
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import yfinance as yf
+import pandas as pd
+import markdown
+
+from database import get_connection
+from config import Config
+from llm.llm_client import get_continuation_analysis, get_deep_analysis_report
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+log = logging.getLogger(__name__)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Generate and email deep daily analysis report')
+    parser.add_argument('--date', default=str(date_cls.today()), help='YYYY-MM-DD')
+    parser.add_argument('--dry-run', action='store_true', help='Print report instead of emailing')
+    args = parser.parse_args()
+
+    target_date = args.date
+    dry_run = args.dry_run
+
+    log.info(f"Starting daily analysis report for {target_date} (dry_run={dry_run})")
+
+    # 1. Fetch Top 10 Gainers from DB
+    gainers = fetch_top_gainers_from_db(target_date, limit=10)
+    if not gainers:
+        log.warning(f"No gainers found in database for {target_date}. Did ingest_gainers.py run?")
+        return
+
+    # 2. Top 10 Continuation / Catalyst Analysis
+    log.info("Generating Top 10 Continuation Report...")
+    continuation_md, _ = get_continuation_analysis(target_date, gainers)
+
+    # 3. Top 3 Deep Technical / Fundamental Analysis
+    top_3_gainers = gainers[:3]
+    log.info(f"Fetching deeper technical data for top 3: {[g['ticker'] for g in top_3_gainers]}")
+    deep_data = enrich_deep_technicals(top_3_gainers)
+    
+    log.info("Generating Top 3 Deep Analysis Report...")
+    deep_analysis_md, _ = get_deep_analysis_report(target_date, deep_data)
+
+    # 4. Combine and Email
+    full_report_md = f"# Daily Market Analysis — {target_date}\n\n"
+    full_report_md += "## 🚀 Top 3 Gainers Deep Dive\n\n" + deep_analysis_md + "\n\n---\n\n"
+    full_report_md += "## 📊 Top 10 Continuation & Catalyst Overview\n\n" + continuation_md
+
+    if dry_run:
+        print("\n\n" + "="*50)
+        print(full_report_md)
+        print("="*50 + "\n")
+        log.info("Dry run complete. No email sent.")
+        return
+
+    send_email(target_date, full_report_md)
+
+
+def fetch_top_gainers_from_db(target_date: str, limit: int) -> list[dict]:
+    query = """
+        SELECT ticker, gap_pct, float_shares, rvol_15m, sector, market_cap,
+               news_headline, news_fresh, close_price, open_price
+        FROM daily_gainers
+        WHERE date = ?
+        ORDER BY gap_pct DESC
+        LIMIT ?
+    """
+    with get_connection() as conn:
+        rows = conn.execute(query, (target_date, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def enrich_deep_technicals(gainers: list[dict]) -> list[dict]:
+    enriched = []
+    for g in gainers:
+        ticker = g['ticker']
+        try:
+            t = yf.Ticker(ticker)
+            info = t.info or {}
+            
+            # Fetch 6 months of daily data to calculate 20/50/200 SMA and RSI
+            hist = t.history(period="6mo", interval="1d")
+            
+            sma_20 = "N/A"
+            sma_50 = "N/A"
+            sma_200 = "N/A"
+            rsi_14 = "N/A"
+            
+            if len(hist) > 0:
+                closes = hist['Close']
+                if len(closes) >= 20:
+                    sma_20 = round(closes.rolling(window=20).mean().iloc[-1], 2)
+                if len(closes) >= 50:
+                    sma_50 = round(closes.rolling(window=50).mean().iloc[-1], 2)
+                if len(closes) >= 200:
+                    sma_200 = round(closes.rolling(window=200).mean().iloc[-1], 2)
+                
+                if len(closes) >= 15:
+                    delta = closes.diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss
+                    rsi = 100 - (100 / (1 + rs))
+                    rsi_14 = round(rsi.iloc[-1], 2)
+            
+            enriched.append({
+                'ticker': ticker,
+                'Current Price': f"${g.get('close_price', 'N/A')}",
+                'Gap': f"{g.get('gap_pct', 'N/A')}%",
+                'Sector': g.get('sector', 'N/A'),
+                'Float': format_large_number(g.get('float_shares')),
+                'Market Cap': format_large_number(g.get('market_cap')),
+                'SMA 20': f"${sma_20}",
+                'SMA 50': f"${sma_50}",
+                'SMA 200': f"${sma_200}",
+                'RSI (14)': rsi_14,
+                'Recent Headline': g.get('news_headline', 'N/A'),
+                'Fresh Catalyst?': 'Yes' if g.get('news_fresh') else 'No'
+            })
+        except Exception as e:
+            log.warning(f"Failed to fetch deeper data for {ticker}: {e}")
+            enriched.append({'ticker': ticker, 'Error': str(e)})
+            
+    return enriched
+
+
+def format_large_number(num):
+    if num is None:
+        return 'N/A'
+    if num >= 1e9:
+        return f"{num / 1e9:.2f}B"
+    elif num >= 1e6:
+        return f"{num / 1e6:.2f}M"
+    return str(num)
+
+
+def send_email(date_str: str, markdown_content: str):
+    if not Config.SMTP_SERVER or not Config.SMTP_USER or not Config.NOTIFY_EMAIL:
+        log.error("SMTP configuration is missing in config.py / .env. Cannot send email.")
+        return
+
+    html_content = markdown.markdown(markdown_content)
+
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f"Daily Market Deep Analysis - {date_str}"
+    msg['From'] = Config.SMTP_USER
+    msg['To'] = Config.NOTIFY_EMAIL
+
+    part1 = MIMEText(markdown_content, 'plain')
+    part2 = MIMEText(html_content, 'html')
+    msg.attach(part1)
+    msg.attach(part2)
+
+    try:
+        log.info(f"Connecting to SMTP server {Config.SMTP_SERVER}:{Config.SMTP_PORT}...")
+        server = smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT)
+        server.starttls()
+        if Config.SMTP_PASSWORD:
+            server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+        
+        server.sendmail(Config.SMTP_USER, Config.NOTIFY_EMAIL, msg.as_string())
+        server.quit()
+        log.info("Email sent successfully!")
+    except Exception as e:
+        log.error(f"Failed to send email: {e}")
+
+
+if __name__ == '__main__':
+    main()
