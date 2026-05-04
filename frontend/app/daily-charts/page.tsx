@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getGainersSummary, GainerSummary } from '@/lib/api'
 import MiniSessionChart from '@/components/MiniSessionChart'
@@ -19,7 +19,7 @@ function todayET(): string {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-export default function DailyChartsPage() {
+function DailyChartsContent() {
   const router       = useRouter()
   const searchParams = useSearchParams()
 
@@ -207,3 +207,16 @@ export default function DailyChartsPage() {
     </div>
   )
 }
+
+export default function DailyChartsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center py-24 text-gray-500">
+        Loading charts...
+      </div>
+    }>
+      <DailyChartsContent />
+    </Suspense>
+  )
+}
+
