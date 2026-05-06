@@ -48,7 +48,7 @@ function DailyChartsContent() {
         setSummary({
           date:    targetDate,
           total:   rows.length,
-          gainers: rows.slice(0, 10).map((g: any) => ({
+          gainers: rows.slice(0, 9).map((g: any) => ({
             ticker:       g.ticker,
             gap_pct:      g.gap_pct,
             float_shares: g.float_shares,
@@ -101,7 +101,7 @@ function DailyChartsContent() {
             Daily Chart Overview
           </h1>
           <p className="text-gray-500 text-sm mt-0.5">
-            Top 10 intraday sessions · candlestick + volume + EMA 21
+            Top 9 intraday sessions · candlestick + volume + EMA 21
           </p>
         </div>
 
@@ -163,8 +163,8 @@ function DailyChartsContent() {
 
       {/* ── State: loading ── */}
       {loading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
-          {Array.from({ length: 10 }).map((_, i) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden animate-pulse">
               <div className="h-8 bg-gray-800 border-b border-gray-700" />
               <div className="h-[200px] bg-[#0d0d14]" />
@@ -185,7 +185,7 @@ function DailyChartsContent() {
 
       {/* ── Chart grid ── */}
       {!loading && summary && summary.gainers.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {summary.gainers.map((g, idx) => (
             <div key={g.ticker} className="relative">
               {/* Rank badge */}

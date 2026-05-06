@@ -75,7 +75,7 @@ def sectors():
 
 @gainers_bp.route('/gainers/summary', methods=['GET'])
 def gainers_summary():
-    """Dashboard endpoint: latest ingest date + top 10 gainers for that date + total count."""
+    """Dashboard endpoint: latest ingest date + top 9 gainers for that date + total count."""
     from database import get_connection
     with get_connection() as conn:
         date_row = conn.execute(
@@ -93,7 +93,7 @@ def gainers_summary():
             """SELECT ticker, gap_pct, float_shares, rvol_15m, sector,
                       news_headline, news_fresh, close_price, open_price
                FROM daily_gainers WHERE date = %s
-               ORDER BY gap_pct DESC LIMIT 10""",
+               ORDER BY gap_pct DESC LIMIT 9""",
             (latest_date,),
         ).fetchall()
 
