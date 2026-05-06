@@ -342,7 +342,7 @@ Classify the catalyst as:
 🟡 TIER 2 — Soft catalyst (contract win, partnership, MOU, analyst upgrade with new data, guidance raise)
 🔴 TIER 3 — No real catalyst (vague press release, general sector hype, price target update, no filing, unknown)
 
-Output EXACTLY this format:
+Output EXACTLY this format (ensure tables have proper newlines to render correctly):
 
 ## ⚡ Catalyst Report: [TICKER]
 ### Catalyst Tier: [🟢 TIER 1 / 🟡 TIER 2 / 🔴 TIER 3]
@@ -416,12 +416,13 @@ options sentiment, and the stock's own historical gainer appearances from a pers
 Your job: synthesize everything into a unified Setup Score and actionable playbook.
 The trader wants to know: IS THIS A REAL SETUP or noise?
 
-Output EXACTLY this format:
+Output EXACTLY this format (ensure tables have proper newlines to render correctly):
 
 ## 📊 Deep Context: [TICKER]
 ### Setup Score: [1–10] | Conviction: [LOW / MEDIUM / HIGH]
 
 **Technical Picture**:
+
 | Indicator | Value | Signal |
 |---|---|---|
 | Price vs SMA 20 | [above/below by X%] | 🟢/🔴 |
