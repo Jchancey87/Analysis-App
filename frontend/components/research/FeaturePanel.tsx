@@ -22,7 +22,7 @@ interface FeaturePanelProps {
   title:       string
   description: string
   Icon:        LucideIcon
-  accentColor: 'orange' | 'emerald' | 'blue'
+  accentColor: 'orange' | 'emerald' | 'blue' | 'violet'
   state:       FeatureState
   onTrigger:   () => void
   ticker:      string | null
@@ -57,6 +57,15 @@ const COLORS = {
     status: 'text-blue-300',
     btn:    'bg-blue-600 hover:bg-blue-500',
     tag:    'text-blue-400',
+  },
+  violet: {
+    icon:   'text-violet-400',
+    border: 'border-violet-500/20',
+    bg:     'bg-violet-500/5',
+    spin:   'text-violet-400',
+    status: 'text-violet-300',
+    btn:    'bg-violet-600 hover:bg-violet-500',
+    tag:    'text-violet-400',
   },
 }
 
