@@ -2,11 +2,21 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from config import Config
 from database import init_db, get_db_status
+import json
+from decimal import Decimal
 
+
+class DecimalEncoder(json.JSONEncoder):
+    """Converts PostgreSQL Decimal types to float for JSON serialization."""
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
 
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
+    app.json_encoder = DecimalEncoder
 
     # CORS — allow Next.js dev server and NPM proxy
     CORS(app, resources={r"/api/*": {"origins": "*"}})
