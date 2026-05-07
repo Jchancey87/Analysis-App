@@ -52,6 +52,7 @@ function fmtFloat(n: number | null) {
 }
 
 export default function MiniSessionChart({ ticker, date, gapPct, float: floatShares, rvol, onExpand }: Props) {
+  const [clickStart, setClickStart] = useState<{ x: number; y: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef     = useRef<IChartApi | null>(null)
   const [data,    setData]    = useState<ChartData | null>(null)
@@ -171,11 +172,27 @@ export default function MiniSessionChart({ ticker, date, gapPct, float: floatSha
     return () => { ro.disconnect(); chart.remove() }
   }, [data])
 
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setClickStart({ x: e.clientX, y: e.clientY })
+  }
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (!clickStart) return
+    const dx = Math.abs(e.clientX - clickStart.x)
+    const dy = Math.abs(e.clientY - clickStart.y)
+    // If mouse moved less than 5px, it's a click, not a drag
+    if (dx < 5 && dy < 5) {
+      onExpand(ticker)
+    }
+    setClickStart(null)
+  }
+
   return (
     <div
       className="bg-[#0d0d14] border border-gray-800 rounded-xl overflow-hidden
-                 hover:border-emerald-500/40 transition-colors group cursor-pointer"
-      onClick={() => onExpand(ticker)}
+                 hover:border-emerald-500/40 transition-colors group"
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800/80">

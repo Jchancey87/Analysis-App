@@ -32,9 +32,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Screening criteria constants
 # ---------------------------------------------------------------------------
-MIN_GAP_PCT    = 5.0    # > 5% gap
+MIN_GAP_PCT    = 10.0   # > 10% gap
 MAX_FLOAT_M    = 50.0   # < 50M shares (wider net; filter further in UI)
-MIN_RVOL       = 2.0    # > 2x RVOL (conservative at ingest; filter in UI)
+MIN_RVOL       = 2.0    # > 2x RVOL (hard filter at ingest)
 MAX_MARKET_CAP = 500e6  # < $500M
 
 
@@ -219,6 +219,9 @@ def _enrich_with_yfinance(tickers: list[str], target_date: str) -> list[dict]:
             volume     = float(today_row.get('Volume', 0))
             avg_volume = float(info.get('averageVolume', 0) or info.get('averageDailyVolume10Day', 0) or 1)
             rvol_15m   = round(volume / avg_volume, 2) if avg_volume else None
+
+            if rvol_15m is not None and rvol_15m < MIN_RVOL:
+                continue
 
             news_headline = _get_news_headline(t)
             news_fresh    = _classify_news(news_headline)
