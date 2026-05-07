@@ -25,21 +25,33 @@ def heatmap():
     from datetime import datetime, timedelta
     from services.heatmap_service import get_sector_spec
 
-    period = (request.args.get('period') or 'all').lower()
-    view   = (request.args.get('view')   or 'float_rvol').lower()
+    period      = (request.args.get('period') or 'all').lower()
+    view        = (request.args.get('view')   or 'float_rvol').lower()
+    exact_date  = request.args.get('date')
+    min_gap     = request.args.get('min_gap',   type=float)
+    max_float_m = request.args.get('max_float', type=float)
+    min_rvol    = request.args.get('min_rvol',  type=float)
+    sector      = request.args.get('sector')
 
     cutoff = None
-    today  = datetime.utcnow().date()
-    if period == 'week':
-        cutoff = (today - timedelta(days=7)).isoformat()
-    elif period == 'month':
-        cutoff = (today - timedelta(days=30)).isoformat()
-    elif period == 'year':
-        cutoff = (today - timedelta(days=365)).isoformat()
+    if not exact_date:
+        today  = datetime.utcnow().date()
+        if period == 'week':
+            cutoff = (today - timedelta(days=7)).isoformat()
+        elif period == 'month':
+            cutoff = (today - timedelta(days=30)).isoformat()
+        elif period == 'year':
+            cutoff = (today - timedelta(days=365)).isoformat()
 
     if view == 'sector':
-        return jsonify(get_sector_spec(cutoff_date=cutoff))
-    return jsonify(build_heatmap_spec(cutoff_date=cutoff))
+        return jsonify(get_sector_spec(
+            cutoff_date=cutoff, exact_date=exact_date, min_gap=min_gap,
+            max_float_m=max_float_m, min_rvol=min_rvol, sector=sector
+        ))
+    return jsonify(build_heatmap_spec(
+        cutoff_date=cutoff, exact_date=exact_date, min_gap=min_gap,
+        max_float_m=max_float_m, min_rvol=min_rvol, sector=sector
+    ))
 
 
 @gainers_bp.route('/gainers/export', methods=['GET'])
@@ -144,30 +156,52 @@ def ticker_history():
     from database import get_connection
     from datetime import datetime, timedelta
 
-    period = (request.args.get('period') or 'all').lower()
-    search = (request.args.get('search') or '').upper().strip()
-    sort   = (request.args.get('sort')   or 'last_seen').lower()
-    limit  = request.args.get('limit', 200, type=int)
+    period      = (request.args.get('period') or 'all').lower()
+    search      = (request.args.get('search') or '').upper().strip()
+    sort        = (request.args.get('sort')   or 'last_seen').lower()
+    limit       = request.args.get('limit', 200, type=int)
+    exact_date  = request.args.get('date')
+    min_gap     = request.args.get('min_gap',   type=float)
+    max_float_m = request.args.get('max_float', type=float)
+    min_rvol    = request.args.get('min_rvol',  type=float)
+    sector      = request.args.get('sector')
 
     # Period cutoff
     cutoff = None
-    today  = datetime.utcnow().date()
-    if period == 'week':
-        cutoff = (today - timedelta(days=7)).isoformat()
-    elif period == 'month':
-        cutoff = (today - timedelta(days=30)).isoformat()
-    elif period == 'year':
-        cutoff = (today - timedelta(days=365)).isoformat()
+    if not exact_date:
+        today  = datetime.utcnow().date()
+        if period == 'week':
+            cutoff = (today - timedelta(days=7)).isoformat()
+        elif period == 'month':
+            cutoff = (today - timedelta(days=30)).isoformat()
+        elif period == 'year':
+            cutoff = (today - timedelta(days=365)).isoformat()
 
     # Build query
     conditions = []
     params     = []
-    if cutoff:
+    if exact_date:
+        conditions.append('date = %s')
+        params.append(exact_date)
+    elif cutoff:
         conditions.append('date >= %s')
         params.append(cutoff)
+    
     if search:
         conditions.append('ticker LIKE %s')
         params.append(f'{search}%')
+    if min_gap:
+        conditions.append('gap_pct >= %s')
+        params.append(min_gap)
+    if max_float_m:
+        conditions.append('float_shares <= %s')
+        params.append(max_float_m * 1_000_000)
+    if min_rvol:
+        conditions.append('rvol_15m >= %s')
+        params.append(min_rvol)
+    if sector:
+        conditions.append('sector = %s')
+        params.append(sector)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
@@ -192,7 +226,9 @@ def ticker_history():
                 ROUND(AVG(gap_pct)::numeric,  2)::float             AS avg_gap_pct,
                 ROUND(AVG(rvol_15m)::numeric, 2)::float             AS avg_rvol,
                 ROUND((AVG(float_shares) / 1e6)::numeric, 2)::float AS avg_float_m,
-                MAX(gap_pct)::float                                  AS max_gap_pct
+                MAX(gap_pct)::float                                  AS max_gap_pct,
+                MAX(close_price)::float                              AS last_close,
+                MAX(market_cap)::float                               AS last_market_cap
             FROM daily_gainers
             {where}
             GROUP BY ticker

@@ -97,6 +97,8 @@ export interface TickerHistoryItem {
   avg_rvol:     number | null
   avg_float_m:  number | null
   max_gap_pct:  number | null
+  last_close:      number | null
+  last_market_cap: number | null
 }
 
 export interface TickerAppearance {
@@ -114,10 +116,15 @@ export interface TickerAppearance {
 }
 
 export const getTickerHistory = (params?: {
-  period?:  'week' | 'month' | 'year' | 'all'
-  search?:  string
-  sort?:    'appearances' | 'last_seen' | 'avg_gap' | 'first_seen'
-  limit?:   number
+  period?:    'week' | 'month' | 'year' | 'all'
+  search?:    string
+  sort?:      'appearances' | 'last_seen' | 'avg_gap' | 'first_seen'
+  limit?:     number
+  date?:      string
+  min_gap?:   number
+  max_float?: number
+  min_rvol?:  number
+  sector?:    string
 }) => api.get<TickerHistoryItem[]>('/api/gainers/ticker-history', { params }).then(r => r.data)
 
 export const getTickerAppearances = (ticker: string, period?: string) =>
@@ -125,10 +132,16 @@ export const getTickerAppearances = (ticker: string, period?: string) =>
     params: period ? { period } : undefined
   }).then(r => r.data)
 
-export const getHeatmap = (period?: string, view?: string) =>
-  api.get('/api/gainers/heatmap', {
-    params: { ...(period ? { period } : {}), ...(view ? { view } : {}) }
-  }).then(r => r.data)
+export const getHeatmap = (params?: {
+  period?:    string
+  view?:      string
+  date?:      string
+  min_gap?:   number
+  max_float?: number
+  min_rvol?:  number
+  sector?:    string
+}) =>
+  api.get('/api/gainers/heatmap', { params }).then(r => r.data)
 
 export const getGainersExportUrl = (params?: Record<string, string | number>) => {
   const q = new URLSearchParams(

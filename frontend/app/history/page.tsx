@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  getTickerHistory, getTickerAppearances,
+  getTickerHistory, getTickerAppearances, getSectors,
   TickerHistoryItem, TickerAppearance,
 } from '@/lib/api'
 import HeatMap from '@/components/HeatMap'
@@ -198,6 +198,12 @@ function TickerRow({
         <td className="px-4 py-3 text-right font-mono text-xs text-gray-500 hidden xl:table-cell">
           {fmtFloat(item.avg_float_m)}
         </td>
+        <td className="px-4 py-3 text-right font-mono text-xs text-gray-400">
+          {item.last_close ? `$${item.last_close.toFixed(2)}` : '—'}
+        </td>
+        <td className="px-4 py-3 text-right font-mono text-xs text-gray-500 hidden sm:table-cell">
+          {item.last_market_cap ? (item.last_market_cap >= 1e9 ? `$${(item.last_market_cap/1e9).toFixed(1)}B` : `$${(item.last_market_cap/1e6).toFixed(0)}M`) : '—'}
+        </td>
         <td className="px-4 py-3">
           <button
             id={`research-latest-${item.ticker}`}
@@ -246,27 +252,45 @@ function SortTh({
 export default function HistoryPage() {
   const router = useRouter()
 
-  const [items,   setItems]   = useState<TickerHistoryItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [period,  setPeriod]  = useState<Period>('all')
-  const [sort,    setSort]    = useState<SortKey>('last_seen')
-  const [search,  setSearch]  = useState('')
+  const [items,    setItems]    = useState<TickerHistoryItem[]>([])
+  const [sectors,  setSectors]  = useState<string[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [period,   setPeriod]   = useState<Period>('all')
+  const [sort,     setSort]     = useState<SortKey>('last_seen')
+  const [search,   setSearch]   = useState('')
+
+  // Gainer-style filters
+  const [date,      setDate]     = useState('')
+  const [minGap,    setMinGap]   = useState('')
+  const [maxFloat,  setMaxFloat] = useState('')
+  const [minRvol,   setMinRvol]  = useState('')
+  const [sector,    setSector]   = useState('')
+
   const searchRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getTickerHistory({
-        period,
-        sort,
-        search: search || undefined,
-        limit: 300,
-      })
+      const [data, s] = await Promise.all([
+        getTickerHistory({
+          period: date ? undefined : period,
+          sort,
+          search:    search || undefined,
+          date:      date || undefined,
+          min_gap:   minGap ? Number(minGap) : undefined,
+          max_float: maxFloat ? Number(maxFloat) : undefined,
+          min_rvol:  minRvol ? Number(minRvol) : undefined,
+          sector:    sector || undefined,
+          limit:     300,
+        }),
+        getSectors()
+      ])
       setItems(data)
+      setSectors(s)
     } finally {
       setLoading(false)
     }
-  }, [period, sort, search])
+  }, [period, sort, search, date, minGap, maxFloat, minRvol, sector])
 
   useEffect(() => { load() }, [load])
 
@@ -301,47 +325,114 @@ export default function HistoryPage() {
       </div>
 
       {/* Controls */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-        {/* Search */}
-        <div className="relative">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input
-            id="history-search"
-            ref={searchRef}
-            placeholder="Search ticker…"
-            value={search}
-            onChange={e => setSearch(e.target.value.toUpperCase())}
-            className="bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-white text-sm
-                       placeholder-gray-500 focus:outline-none focus:border-emerald-500 w-40 font-mono"
-          />
+      <div className="space-y-4">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
+          {/* Search */}
+          <div className="relative">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input
+              id="history-search"
+              ref={searchRef}
+              placeholder="Search ticker…"
+              value={search}
+              onChange={e => setSearch(e.target.value.toUpperCase())}
+              className="bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-white text-sm
+                         placeholder-gray-500 focus:outline-none focus:border-emerald-500 w-40 font-mono"
+            />
+          </div>
+
+          {/* Period tabs (hidden if date filter is active) */}
+          {!date && (
+            <div className="flex items-center bg-gray-800/60 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+              {(Object.keys(PERIOD_LABELS) as Period[]).map(p => (
+                <button
+                  key={p}
+                  id={`period-${p}`}
+                  onClick={() => setPeriod(p)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    period === p
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {PERIOD_LABELS[p]}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Result count */}
+          {!loading && (
+            <span className="text-xs text-gray-600 lg:ml-auto">
+              {items.length} ticker{items.length !== 1 ? 's' : ''}
+              {date ? ` on ${date}` : period !== 'all' ? ` in ${PERIOD_LABELS[period].toLowerCase()}` : ''}
+            </span>
+          )}
         </div>
 
-        {/* Period tabs */}
-        <div className="flex items-center bg-gray-800/60 border border-gray-700 rounded-lg p-0.5 gap-0.5">
-          {(Object.keys(PERIOD_LABELS) as Period[]).map(p => (
-            <button
-              key={p}
-              id={`period-${p}`}
-              onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                period === p
-                  ? 'bg-emerald-500/20 text-emerald-400'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              {PERIOD_LABELS[p]}
-            </button>
-          ))}
+        {/* Multi-Filter Bar */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-gray-900/50 border border-gray-800 rounded-xl p-3">
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Specific Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Min Gap %</label>
+            <input
+              type="number"
+              placeholder="e.g. 20"
+              value={minGap}
+              onChange={e => setMinGap(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Max Float (M)</label>
+            <input
+              type="number"
+              placeholder="e.g. 10"
+              value={maxFloat}
+              onChange={e => setMaxFloat(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Min RVOL</label>
+            <input
+              type="number"
+              placeholder="e.g. 5"
+              value={minRvol}
+              onChange={e => setMinRvol(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Sector</label>
+            <div className="flex gap-2">
+              <select
+                value={sector}
+                onChange={e => setSector(e.target.value)}
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+              >
+                <option value="">All Sectors</option>
+                {sectors.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {(date || minGap || maxFloat || minRvol || sector) && (
+                <button
+                  onClick={() => { setDate(''); setMinGap(''); setMaxFloat(''); setMinRvol(''); setSector('') }}
+                  className="px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-[10px] text-gray-400 hover:text-white"
+                >
+                  RESET
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-
-        {/* Result count */}
-        {!loading && (
-          <span className="text-xs text-gray-600 ml-auto">
-            {items.length} ticker{items.length !== 1 ? 's' : ''}
-            {search ? ` matching "${search}"` : ''}
-            {period !== 'all' ? ` in ${PERIOD_LABELS[period].toLowerCase()}` : ''}
-          </span>
-        )}
       </div>
 
       {/* Heatmap — period-reactive */}
@@ -356,7 +447,15 @@ export default function HistoryPage() {
           <ChevronDown size={13} className="ml-auto text-gray-600 group-open:rotate-180 transition-transform" />
         </summary>
         <div className="px-5 pb-5 border-t border-gray-800/60 pt-3">
-          <HeatMap period={period} height={300} />
+          <HeatMap
+            period={date ? undefined : period}
+            date={date || undefined}
+            minGap={minGap ? Number(minGap) : undefined}
+            maxFloat={maxFloat ? Number(maxFloat) : undefined}
+            minRvol={minRvol ? Number(minRvol) : undefined}
+            sector={sector || undefined}
+            height={300}
+          />
           <p className="text-[11px] text-gray-700 mt-2">
             Each cell = average gap % for gainers in that float + RVOL bucket · hover for sample count
           </p>
@@ -383,6 +482,12 @@ export default function HistoryPage() {
               </th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 hidden xl:table-cell">
                 Avg Float
+              </th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
+                Close
+              </th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 hidden sm:table-cell">
+                Mkt Cap
               </th>
               <th className="px-4 py-3 w-8" />
             </tr>

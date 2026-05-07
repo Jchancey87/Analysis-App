@@ -26,6 +26,11 @@ interface Props {
   height?: number
   /** Whether to show the view tab switcher inside the component. Default true. */
   showTabs?: boolean
+  date?:      string
+  minGap?:    number
+  maxFloat?:  number
+  minRvol?:   number
+  sector?:    string
 }
 
 const VIEW_TABS: { key: View; label: string }[] = [
@@ -33,8 +38,11 @@ const VIEW_TABS: { key: View; label: string }[] = [
   { key: 'sector',     label: 'By Sector' },
 ]
 
-export default function HeatMap({ spec: initialSpec, period, height = 320, showTabs = true }: Props) {
-  const clientManaged = period !== undefined
+export default function HeatMap({
+  spec: initialSpec, period, height = 320, showTabs = true,
+  date, minGap, maxFloat, minRvol, sector
+}: Props) {
+  const clientManaged = period !== undefined || date !== undefined
 
   const [view,    setView]    = useState<View>('float_rvol')
   const [spec,    setSpec]    = useState<HeatmapSpec>(initialSpec ?? null)
@@ -45,15 +53,20 @@ export default function HeatMap({ spec: initialSpec, period, height = 320, showT
     if (!clientManaged && view === 'float_rvol') return  // use passed-in spec for default case
     let cancelled = false
     setLoading(true)
-    getHeatmap(
-      period === 'all' ? undefined : period,
-      view === 'sector' ? 'sector' : undefined,
-    )
+    getHeatmap({
+      period: period === 'all' ? undefined : period,
+      view: view === 'sector' ? 'sector' : undefined,
+      date,
+      min_gap: minGap,
+      max_float: maxFloat,
+      min_rvol: minRvol,
+      sector,
+    })
       .then(s => { if (!cancelled) setSpec(s) })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [period, view, clientManaged])
+  }, [period, view, clientManaged, date, minGap, maxFloat, minRvol, sector])
 
   // Compute dynamic height: sector chart needs more room for many sector labels
   const chartHeight = view === 'sector'

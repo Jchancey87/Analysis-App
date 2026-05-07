@@ -8,7 +8,6 @@ import {
 
 const links = [
   { href: '/',             label: 'Dashboard',    icon: LayoutDashboard },
-  { href: '/gainers',      label: 'Gainers',      icon: TrendingUp },
   { href: '/history',      label: 'History',      icon: History },
   { href: '/daily-charts', label: 'Daily Charts', icon: AreaChart },
   { href: '/charts',       label: 'Charts',       icon: Camera },

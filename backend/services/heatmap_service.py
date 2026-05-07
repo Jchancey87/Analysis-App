@@ -8,24 +8,44 @@ RVOL_BINS    = [0, 3, 5, 10, float('inf')]
 RVOL_LABELS  = ['<3x', '3–5x', '5–10x', '10x+']
 
 
-def build_heatmap_spec(cutoff_date: str | None = None) -> dict:
+def build_heatmap_spec(
+    cutoff_date: str | None = None,
+    exact_date:  str | None = None,
+    min_gap:     float | None = None,
+    max_float_m: float | None = None,
+    min_rvol:    float | None = None,
+    sector:      str | None = None
+) -> dict:
     """
     Query daily_gainers, bucket float and RVOL, compute average gap_pct per cell.
     Returns a Plotly-compatible figure dict ready to JSON-serialize.
-
-    Args:
-        cutoff_date: Optional ISO date string (YYYY-MM-DD). If set, only rows
-                     with date >= cutoff_date are included.
     """
-    query  = ("SELECT float_shares, rvol_15m, gap_pct FROM daily_gainers "
-              "WHERE float_shares IS NOT NULL AND rvol_15m IS NOT NULL AND gap_pct IS NOT NULL")
+    query  = ["SELECT float_shares, rvol_15m, gap_pct FROM daily_gainers", "WHERE float_shares IS NOT NULL AND rvol_15m IS NOT NULL AND gap_pct IS NOT NULL"]
     params = []
-    if cutoff_date:
-        query += " AND date >= %s"
+
+    if exact_date:
+        query.append("AND date = %s")
+        params.append(exact_date)
+    elif cutoff_date:
+        query.append("AND date >= %s")
         params.append(cutoff_date)
 
+    if min_gap:
+        query.append("AND gap_pct >= %s")
+        params.append(min_gap)
+    if max_float_m:
+        query.append("AND float_shares <= %s")
+        params.append(max_float_m * 1_000_000)
+    if min_rvol:
+        query.append("AND rvol_15m >= %s")
+        params.append(min_rvol)
+    if sector:
+        query.append("AND sector = %s")
+        params.append(sector)
+
+    full_query = " ".join(query)
     with get_connection() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = conn.execute(full_query, params).fetchall()
 
     if not rows:
         return _empty_heatmap()
@@ -125,23 +145,43 @@ def _empty_heatmap() -> dict:
     }
 
 
-def get_sector_spec(cutoff_date: str | None = None) -> dict:
+def get_sector_spec(
+    cutoff_date: str | None = None,
+    exact_date:  str | None = None,
+    min_gap:     float | None = None,
+    max_float_m: float | None = None,
+    min_rvol:    float | None = None,
+    sector:      str | None = None
+) -> dict:
     """
     Return a Plotly horizontal bar chart of average gap % per sector.
-    Bars are sorted descending, coloured on the same emerald scale.
-
-    Args:
-        cutoff_date: Optional ISO date string. If set, only rows >= this date.
     """
-    query  = ("SELECT sector, gap_pct FROM daily_gainers "
-              "WHERE sector IS NOT NULL AND gap_pct IS NOT NULL AND sector != ''")
+    query  = ["SELECT sector, gap_pct FROM daily_gainers", "WHERE sector IS NOT NULL AND gap_pct IS NOT NULL AND sector != ''"]
     params = []
-    if cutoff_date:
-        query += " AND date >= %s"
+
+    if exact_date:
+        query.append("AND date = %s")
+        params.append(exact_date)
+    elif cutoff_date:
+        query.append("AND date >= %s")
         params.append(cutoff_date)
 
+    if min_gap:
+        query.append("AND gap_pct >= %s")
+        params.append(min_gap)
+    if max_float_m:
+        query.append("AND float_shares <= %s")
+        params.append(max_float_m * 1_000_000)
+    if min_rvol:
+        query.append("AND rvol_15m >= %s")
+        params.append(min_rvol)
+    if sector:
+        query.append("AND sector = %s")
+        params.append(sector)
+
+    full_query = " ".join(query)
     with get_connection() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = conn.execute(full_query, params).fetchall()
 
     if not rows:
         return _empty_sector()
