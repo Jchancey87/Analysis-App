@@ -365,7 +365,7 @@ export interface PipeScanResult {
 }
 
 export const startPipeAnalysis = (ticker: string, date?: string) =>
-  api.post<{ job_id: string; status: string }>('/api/research/pipe', { ticker, date }).then(r => r.data)
+  api.post<JobResponse>('/api/research/pipe', { ticker, date }).then(r => r.data)
 
 export const getPipeScan = (date: string) =>
   api.get<PipeScanResult[]>('/api/gainers/pipe-scan', { params: { date } }).then(r => r.data)

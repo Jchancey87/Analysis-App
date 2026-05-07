@@ -229,8 +229,8 @@ export default function ResearchPage() {
     if (!ticker) return
     setPipe({ ...EMPTY_FEATURE, loading: true, status: 'Scanning SEC 8-K filings for PIPE signals…' })
     try {
-      const { job_id } = await startPipeAnalysis(ticker, date || undefined)
-      setPipe(s => ({ ...s, jobId: job_id }))
+      const res = await startPipeAnalysis(ticker, date || undefined)
+      if ('job_id' in res) setPipe(s => ({ ...s, jobId: res.job_id }))
     } catch (e: any) {
       setPipe({ ...EMPTY_FEATURE, error: e?.response?.data?.error ?? 'Failed to start PIPE analysis' })
     }

@@ -72,6 +72,13 @@ export default function ResearchPanel({ defaultDate }: Props) {
       const res = mode === 'research'
         ? await startResearch(ticker.toUpperCase(), date)
         : await startSentiment(query)
+
+      // Cache-hit: render immediately, no job polling needed
+      if ('cached' in res && res.cached) {
+        setActiveJob({ id: 'cache', status: 'done', output: res.report, type: mode } as LLMJob)
+        return
+      }
+
       setActiveJob({ id: res.job_id, status: 'pending', type: mode } as LLMJob)
       await poll(res.job_id)
     } catch (err: any) {
