@@ -79,8 +79,10 @@ export default function ResearchPanel({ defaultDate }: Props) {
         return
       }
 
-      setActiveJob({ id: res.job_id, status: 'pending', type: mode } as LLMJob)
-      await poll(res.job_id)
+      if ('job_id' in res) {
+        setActiveJob({ id: res.job_id, status: 'pending', type: mode } as LLMJob)
+        await poll(res.job_id)
+      }
     } catch (err: any) {
       setError(err?.response?.data?.error ?? 'Request failed')
     } finally {
