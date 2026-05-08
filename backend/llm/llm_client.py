@@ -568,5 +568,8 @@ def get_ticker_enrichment(ticker: str, sector: str, description: str) -> dict:
         return json.loads(clean)
     except Exception as e:
         import logging
-        logging.getLogger(__name__).warning(f"Watchlist enrichment failed for {ticker}: {e}")
+        import traceback
+        log = logging.getLogger(__name__)
+        log.warning(f"Watchlist enrichment failed for {ticker}: {str(e)}")
+        # log.debug(traceback.format_exc()) # Optional: very verbose
         return {"notes": None, "tags": []}

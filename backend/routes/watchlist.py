@@ -52,7 +52,7 @@ def add_to_watchlist():
                 enrich = get_ticker_enrichment(
                     ticker, 
                     profile.get('sector', 'Unknown'), 
-                    profile.get('description', 'No description available.')
+                    profile.get('description') or f"A company in the {profile.get('sector', 'Unknown')} sector."
                 )
                 if not notes:
                     notes = enrich.get('notes')

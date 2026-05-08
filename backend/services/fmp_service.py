@@ -18,6 +18,7 @@ import requests
 import pytz
 from datetime import datetime, timedelta
 from config import Config
+from services.polygon_service import get_ticker_details
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +125,11 @@ def get_company_profile(ticker: str) -> dict:
     """
     data = _get(f'profile/{ticker.upper()}')
     if not data or not isinstance(data, list) or not data[0]:
+        log.info(f"[FMP] Profile missing for {ticker}, trying Polygon fallback...")
+        poly_data = get_ticker_details(ticker)
+        if poly_data:
+            poly_data['_data_as_of'] = str(_today_et().date())
+            return poly_data
         return {}
 
     p = data[0]
