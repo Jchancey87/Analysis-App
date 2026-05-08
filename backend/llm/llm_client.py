@@ -533,3 +533,38 @@ def get_pipe_analysis(ticker: str, data: dict) -> tuple[str, str]:
     )
     result = _chat(PIPE_ANALYSIS_SYSTEM, user_msg, max_tokens=1500)
     return result, Config.LLM_MODEL
+
+
+# ---------------------------------------------------------------------------
+# Watchlist Enrichment
+# ---------------------------------------------------------------------------
+
+WATCHLIST_ENRICHMENT_SYSTEM = """
+You are a trading assistant. You are given a stock ticker, its sector, and a brief description.
+Your job is to provide:
+1. A concise, one-sentence "Note" that summarizes the core business or recent momentum profile (max 15 words).
+2. A list of 2-3 relevant "Tags" from this list: [momentum, breakout, reversal, squeeze, catalyst, earnings, watchonly].
+
+Respond ONLY with valid JSON in this format:
+{
+  "notes": "Short summary here...",
+  "tags": ["tag1", "tag2"]
+}
+"""
+
+def get_ticker_enrichment(ticker: str, sector: str, description: str) -> dict:
+    """Get AI-generated notes and tags for a watchlist ticker."""
+    import json
+    user_msg = (
+        f"Ticker: {ticker}\n"
+        f"Sector: {sector}\n"
+        f"Description: {description}\n"
+    )
+    # Use a small token limit and fast model if possible (Config.LLM_MODEL is usually fast)
+    raw = _chat(WATCHLIST_ENRICHMENT_SYSTEM, user_msg, max_tokens=150)
+    try:
+        # Strip potential markdown fences
+        clean = raw.strip().replace('```json', '').replace('```', '').strip()
+        return json.loads(clean)
+    except:
+        return {"notes": None, "tags": []}

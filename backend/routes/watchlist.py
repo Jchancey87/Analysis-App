@@ -35,6 +35,30 @@ def add_to_watchlist():
     tags_raw = data.get('tags', [])
     if not isinstance(tags_raw, list):
         return jsonify({'error': 'tags must be a JSON array'}), 400
+
+    # ── Automatic Enrichment ──────────────────────────────────────────
+    # If key data is missing, fetch from FMP + supplement with AI
+    if not sector or not notes or not tags_raw:
+        from services.fmp_service import get_company_profile
+        from llm.llm_client import get_ticker_enrichment
+
+        profile = get_company_profile(ticker)
+        if profile:
+            if not sector:
+                sector = profile.get('sector')
+            
+            # If notes or tags are still empty, use AI to summarize the profile
+            if not notes or not tags_raw:
+                enrich = get_ticker_enrichment(
+                    ticker, 
+                    profile.get('sector', 'Unknown'), 
+                    profile.get('description', 'No description available.')
+                )
+                if not notes:
+                    notes = enrich.get('notes')
+                if not tags_raw:
+                    tags_raw = enrich.get('tags', [])
+
     tags = json.dumps([str(t).strip() for t in tags_raw if str(t).strip()])
 
     now = datetime.now(timezone.utc).isoformat()
