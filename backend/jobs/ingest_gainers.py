@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """
 Post-close gainer ingestion job.
-Triggered by cron at 4:15 PM CT Mon–Fri:
+Triggered by cron at 4:15 PM ET Mon–Fri:
   15 16 * * 1-5 /opt/trading-journal/venv/bin/python /opt/trading-journal/backend/jobs/ingest_gainers.py
 
 Can also be run manually:
   python ingest_gainers.py --date 2026-05-01
   python ingest_gainers.py --dry-run
+
+Data source strategy:
+  - Polygon Snapshot API  → top gainers ticker list (incl. extended hours)
+  - Polygon Grouped Daily → OHLCV, volume, gap calculation
+  - Polygon News API      → news headline
+  - FMP /profile          → float_shares, sector (250 calls/day; cached 7 days)
+  - yfinance              → float fallback ONLY if FMP returns None
 """
 import sys
 import os
 import argparse
 import logging
-from datetime import date as date_cls
+from datetime import date as date_cls, datetime, timedelta
 
 # Allow imports from backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import requests
-import yfinance as yf
-import pandas as pd
 from config import Config
 
 logging.basicConfig(
@@ -37,19 +42,18 @@ MAX_FLOAT_M    = 50.0   # < 50M shares (wider net; filter further in UI)
 MIN_RVOL       = 2.0    # > 2x RVOL (hard filter at ingest)
 MAX_MARKET_CAP = 500e6  # < $500M
 
+POLYGON_SNAPSHOT_LIMIT = 50   # tickers to pull from Polygon gainers snapshot
+
 
 # ---------------------------------------------------------------------------
 # Main entry
 # ---------------------------------------------------------------------------
 
 def main():
-    # Ensure target_date is based on New York time (US/Eastern)
-    # This prevents UTC servers from tagging late-night ingests as 'tomorrow'
-    from datetime import datetime
     import pytz
     eastern = pytz.timezone('US/Eastern')
     ny_now  = datetime.now(eastern)
-    
+
     parser = argparse.ArgumentParser(description='Ingest daily top gainers')
     parser.add_argument('--date',    default=ny_now.strftime('%Y-%m-%d'), help='YYYY-MM-DD')
     parser.add_argument('--dry-run', action='store_true', help='Fetch data but do not write to DB')
@@ -77,192 +81,264 @@ def main():
 
 
 # ---------------------------------------------------------------------------
-# Data fetching
+# Orchestration
 # ---------------------------------------------------------------------------
 
 def fetch_gainers(target_date: str) -> list[dict]:
     """
-    Pull top small-cap gainers using Polygon (if key provided), then finviz, 
-    then fallback to yfinance.
+    Full enrichment pipeline:
+      1. Polygon Snapshot → ticker list
+      2. Polygon Grouped Daily → OHLCV for all tickers in one call
+      3. FMP profile → float, sector (yfinance fallback for float)
+      4. Polygon News → headline
+      5. Filter and return qualified gainers
     """
-    tickers = []
-    
-    if Config.POLYGON_API_KEY:
-        tickers = _get_tickers_from_polygon()
-        if tickers:
-            log.info(f"Polygon returned {len(tickers)} tickers")
-        else:
-            log.warning("Polygon returned no tickers — trying finviz")
-            
-    if not tickers:
-        tickers = _get_tickers_from_finviz()
-        
-    if not tickers:
-        log.warning("finviz returned no tickers — trying yfinance trending")
-        tickers = _get_tickers_fallback()
-
-    # Also grab specifically after-hours movers to ensure continuation accuracy
-    ah_tickers = _get_tickers_after_hours()
-    if ah_tickers:
-        log.info(f"Added {len(ah_tickers)} post-market movers")
-        tickers = list(set(tickers + ah_tickers))
-
-    if not tickers:
-        log.error("No tickers found from any source")
+    # Step 1 — ticker candidates from Polygon snapshot
+    raw_snapshot = _get_polygon_snapshot()
+    if not raw_snapshot:
+        log.error("Polygon snapshot returned no tickers — aborting")
         return []
 
-    return _enrich_with_yfinance(tickers, target_date)
+    log.info(f"Polygon snapshot: {len(raw_snapshot)} tickers")
 
+    # Step 2 — grouped daily OHLCV (single Polygon call for whole market)
+    grouped = _get_polygon_grouped_daily(target_date)
+    log.info(f"Polygon grouped daily: {len(grouped)} bars for {target_date}")
 
-def _get_tickers_from_polygon() -> list[str]:
-    """Fetch top gainers from Polygon Snapshot API."""
-    try:
-        url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={Config.POLYGON_API_KEY}"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        tickers = [s['ticker'] for s in data.get('tickers', []) if s.get('ticker')]
-        return tickers[:50]
-    except Exception as e:
-        log.warning(f"Polygon API failed: {e}")
-        return []
-
-
-def _get_tickers_from_finviz() -> list[str]:
-    """Use finviz screener to get small-cap gappers."""
-    try:
-        from finviz.screener import Screener
-        # Filters: US equities, gap > 5%, float < 50M, price > $1
-        filters = [
-            'geo_usa',
-            'ta_gap_u5',       # gap up > 5%
-            'sh_float_u50',    # float under 50M
-            'sh_price_o1',     # price over $1
-        ]
-        stocks = Screener(filters=filters, table='Overview', order='-change')
-        tickers = [s['Ticker'] for s in stocks if s.get('Ticker')]
-        log.info(f"finviz returned {len(tickers)} tickers")
-        return tickers[:30]  # cap to top 30
-    except Exception as e:
-        log.warning(f"finviz screener failed: {e}")
-        return []
-
-
-def _get_tickers_fallback() -> list[str]:
-    """Fallback: pull from Yahoo Finance trending/most-active."""
-    try:
-        import requests
-        # Yahoo Finance most-active small-cap (unofficial endpoint)
-        url = (
-            "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
-            "?formatted=false&scrIds=day_gainers&count=25"
-        )
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        quotes = resp.json()['finance']['result'][0]['quotes']
-        return [q['symbol'] for q in quotes if q.get('symbol')]
-    except Exception as e:
-        log.warning(f"Yahoo fallback failed: {e}")
-        return []
-def _get_tickers_after_hours() -> list[str]:
-    """Specifically fetch movers from Yahoo's After Hours gainer list."""
-    try:
-        url = (
-            "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
-            "?formatted=false&scrIds=after_hours_gainers&count=25"
-        )
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        quotes = resp.json()['finance']['result'][0]['quotes']
-        return [q['symbol'] for q in quotes if q.get('symbol')]
-    except Exception as e:
-        log.warning(f"After-hours fetch failed: {e}")
-        return []
-
-
-def _enrich_with_yfinance(tickers: list[str], target_date: str) -> list[dict]:
-    """Download OHLCV + info for each ticker and build gainer rows."""
+    # Step 3–5 — enrich each ticker
     gainers = []
+    for snap in raw_snapshot:
+        result = _enrich_ticker(snap, grouped, target_date)
+        if result:
+            gainers.append(result)
 
-    for ticker in tickers:
-        try:
-            t    = yf.Ticker(ticker)
-            info = t.info or {}
-
-            # Price data — use 2-day window to compute gap
-            hist = t.history(period='2d', interval='1d')
-            if len(hist) < 1:
-                continue
-
-            today_row = hist.iloc[-1]
-            prev_row  = hist.iloc[-2] if len(hist) >= 2 else None
-
-            # Get the "True" current price (prefer post-market if available)
-            prev_close = info.get('regularMarketPreviousClose') or (float(prev_row['Close']) if prev_row is not None else None)
-            
-            # Use post-market price if it's currently after hours
-            current_price = info.get('postMarketPrice') or info.get('currentPrice') or float(today_row['Close'])
-            
-            if prev_close:
-                gap_pct = ((current_price - prev_close) / prev_close) * 100
-            else:
-                gap_pct = 0
-
-            if gap_pct < MIN_GAP_PCT:
-                continue
-
-            float_shares = info.get('floatShares')
-            market_cap   = info.get('marketCap')
-            sector       = info.get('sector') or info.get('industry')
-
-            if float_shares and float_shares > MAX_FLOAT_M * 1e6:
-                continue
-            if market_cap and market_cap > MAX_MARKET_CAP:
-                continue
-
-            # RVOL: volume today / avg volume
-            volume     = float(today_row.get('Volume', 0))
-            avg_volume = float(info.get('averageVolume', 0) or info.get('averageDailyVolume10Day', 0) or 1)
-            rvol_15m   = round(volume / avg_volume, 2) if avg_volume else None
-
-            if rvol_15m is not None and rvol_15m < MIN_RVOL:
-                continue
-
-            news_headline = _get_news_headline(t)
-            news_fresh    = _classify_news(news_headline)
-
-            gainers.append({
-                'ticker':        ticker,
-                'gap_pct':       round(gap_pct, 2),
-                'float_shares':  float_shares,
-                'rvol_15m':      rvol_15m,
-                'sector':        sector,
-                'market_cap':    market_cap,
-                'news_headline': news_headline,
-                'news_fresh':    news_fresh,
-                'close_price':   round(current_price, 4),
-                'open_price':    round(float(today_row['Open']), 4),
-            })
-
-        except Exception as e:
-            log.warning(f"Failed to enrich {ticker}: {e}")
-            continue
-
+    # Sort descending by gap
+    gainers.sort(key=lambda x: x['gap_pct'], reverse=True)
     return gainers
 
 
-def _get_news_headline(ticker_obj) -> str | None:
-    """Return the most recent news headline for the ticker."""
+# ---------------------------------------------------------------------------
+# Step 1 — Polygon Snapshot (top gainers, extended hours aware)
+# ---------------------------------------------------------------------------
+
+def _get_polygon_snapshot() -> list[dict]:
+    """Fetch top gainers from Polygon Snapshot API (Standard tier includes AH)."""
+    if not Config.POLYGON_API_KEY:
+        log.error("POLYGON_API_KEY not configured")
+        return []
     try:
-        news = ticker_obj.news
-        if news:
-            return news[0].get('title')
-    except Exception:
-        pass
+        url = (
+            f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers"
+            f"?include_otc=false&apiKey={Config.POLYGON_API_KEY}"
+        )
+        resp = requests.get(url, timeout=12)
+        resp.raise_for_status()
+        tickers = resp.json().get('tickers', [])
+        return tickers[:POLYGON_SNAPSHOT_LIMIT]
+    except Exception as e:
+        log.warning(f"Polygon snapshot failed: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — Polygon Grouped Daily (single call for all OHLCV)
+# ---------------------------------------------------------------------------
+
+def _get_polygon_grouped_daily(date: str) -> dict[str, dict]:
+    """
+    Fetch the full grouped daily bars for a given date.
+    Returns a dict keyed by ticker symbol for O(1) lookups.
+    Falls back to empty dict on failure (enrichment will skip OHLCV).
+    """
+    if not Config.POLYGON_API_KEY:
+        return {}
+    try:
+        url = (
+            f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{date}"
+            f"?adjusted=true&include_otc=false&apiKey={Config.POLYGON_API_KEY}"
+        )
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+        results = resp.json().get('results', [])
+        return {r['T']: r for r in results if r.get('T')}
+    except Exception as e:
+        log.warning(f"Polygon grouped daily failed for {date}: {e}")
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Per-ticker enrichment
+# ---------------------------------------------------------------------------
+
+def _enrich_ticker(snap: dict, grouped: dict[str, dict], target_date: str) -> dict | None:
+    """
+    Build a fully enriched gainer row from:
+      - Polygon snapshot   (live price, prev close, volume)
+      - Polygon grouped daily (authoritative EOD OHLCV: O/H/L/C/V/VWAP)
+      - SPY bar from grouped daily (RS vs SPY — zero extra API calls)
+      - FMP profile        (float, sector, avg_volume — yfinance float fallback)
+      - Polygon news       (latest headline)
+    Returns None if the ticker doesn't meet screening criteria.
+    """
+    ticker = snap.get('ticker', '')
+    if not ticker or len(ticker) > 5:
+        return None
+
+    # ── Price & Gap from Snapshot ──────────────────────────────────────────
+    day        = snap.get('day', {})
+    prevDay    = snap.get('prevDay', {})
+    last_trade = snap.get('lastTrade', {}) or {}
+
+    prev_close = prevDay.get('c') or prevDay.get('vw')
+    last_price = last_trade.get('p') or day.get('c') or day.get('vw')
+
+    if not prev_close or not last_price or prev_close <= 0:
+        return None
+
+    gap_pct = round(((last_price - prev_close) / prev_close) * 100, 2)
+    if gap_pct < MIN_GAP_PCT:
+        return None
+
+    # ── OHLCV from Grouped Daily (authoritative EOD bars) ─────────────────
+    bar       = grouped.get(ticker, {})
+    open_px   = bar.get('o') or day.get('o') or prev_close
+    high_px   = bar.get('h') or day.get('h')
+    low_px    = bar.get('l') or day.get('l')
+    vwap      = bar.get('vw') or day.get('vw')
+    volume    = bar.get('v') or day.get('v') or 0
+
+    # ── FMP Profile → float, sector, avg_volume, shares_outstanding ────────
+    float_shares, sector, market_cap, shares_out, avg_vol = _get_profile(ticker)
+
+    if float_shares and float_shares > MAX_FLOAT_M * 1e6:
+        return None
+    if market_cap and market_cap > MAX_MARKET_CAP:
+        return None
+
+    # ── RVOL — use FMP avg_volume if available, else prev-day proxy ────────
+    prev_vol = prevDay.get('v') or 0
+    rvol_base = avg_vol or prev_vol or 0
+    rvol = round(volume / rvol_base, 2) if rvol_base > 0 else None
+    if rvol is not None and rvol < MIN_RVOL:
+        return None
+
+    # ── Derived fields ─────────────────────────────────────────────────────
+    dollar_volume = round(last_price * volume, 0) if volume else None
+
+    # Close location: where in the day's range did it close? (1.0 = HOD, 0.0 = LOD)
+    if high_px and low_px and high_px > low_px:
+        close_location = round((last_price - low_px) / (high_px - low_px), 3)
+    else:
+        close_location = None
+
+    # RS vs SPY: stock's move minus SPY's move on the same day (zero extra calls)
+    spy_bar = grouped.get('SPY', {})
+    if spy_bar and spy_bar.get('o') and spy_bar.get('c') and spy_bar['o'] > 0:
+        spy_return = ((spy_bar['c'] - spy_bar['o']) / spy_bar['o']) * 100
+        rs_vs_spy  = round(gap_pct - spy_return, 2)
+    else:
+        rs_vs_spy = None
+
+    # ── News headline from Polygon ─────────────────────────────────────────
+    headline   = _get_polygon_news_headline(ticker)
+    news_fresh = _classify_news(headline)
+
+    return {
+        'ticker':               ticker,
+        'gap_pct':              gap_pct,
+        'float_shares':         float_shares,
+        'rvol_15m':             rvol,
+        'sector':               sector,
+        'market_cap':           market_cap,
+        'news_headline':        headline,
+        'news_fresh':           news_fresh,
+        'close_price':          round(last_price, 4),
+        'open_price':           round(open_px, 4),
+        # new enrichment fields
+        'high_price':           round(high_px, 4) if high_px else None,
+        'low_price':            round(low_px, 4) if low_px else None,
+        'prev_close':           round(prev_close, 4),
+        'vwap':                 round(vwap, 4) if vwap else None,
+        'dollar_volume':        dollar_volume,
+        'close_location':       close_location,
+        'rs_vs_spy':            rs_vs_spy,
+        'shares_outstanding':   shares_out,
+        'avg_volume':           avg_vol,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Profile — FMP primary, yfinance fallback for float
+# ---------------------------------------------------------------------------
+
+def _get_profile(ticker: str) -> tuple[float | None, str | None, float | None, float | None, float | None]:
+    """
+    Return (float_shares, sector, market_cap, shares_outstanding, avg_volume).
+
+    Priority:
+      1. FMP /profile  — primary source, covers most fields
+      2. yfinance      — float fallback ONLY if FMP returns None for floatShares
+      3. None          — store null, display '—' in UI
+    """
+    from services.fmp_service import get_company_profile
+
+    profile = get_company_profile(ticker)
+
+    float_shares        = profile.get('float_shares')
+    sector              = profile.get('sector') or profile.get('industry')
+    market_cap          = profile.get('market_cap')
+    shares_outstanding  = profile.get('shares_outstanding')
+    avg_volume          = profile.get('avg_volume')
+
+    # Float fallback: yfinance if FMP returned nothing
+    if float_shares is None:
+        float_shares = _yf_float_fallback(ticker)
+        if float_shares:
+            log.debug(f"[{ticker}] FMP float=None → yfinance fallback: {float_shares:,.0f}")
+
+    return float_shares, sector, market_cap, shares_outstanding, avg_volume
+
+
+def _yf_float_fallback(ticker: str) -> float | None:
+    """
+    Lightweight yfinance call for float shares only.
+    Used exclusively as a fallback when FMP returns None.
+    """
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info or {}
+        return info.get('floatShares')
+    except Exception as e:
+        log.debug(f"[{ticker}] yfinance float fallback failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# News — Polygon News API (replaces yfinance/Yahoo news)
+# ---------------------------------------------------------------------------
+
+def _get_polygon_news_headline(ticker: str) -> str | None:
+    """Fetch the most recent news headline for a ticker from Polygon."""
+    if not Config.POLYGON_API_KEY:
+        return None
+    try:
+        url = (
+            f"https://api.polygon.io/v2/reference/news"
+            f"?ticker={ticker}&limit=1&apiKey={Config.POLYGON_API_KEY}"
+        )
+        resp = requests.get(url, timeout=8)
+        resp.raise_for_status()
+        results = resp.json().get('results', [])
+        if results:
+            return results[0].get('title')
+    except Exception as e:
+        log.debug(f"[{ticker}] Polygon news failed: {e}")
     return None
 
+
+# ---------------------------------------------------------------------------
+# News freshness classification (LLM)
+# ---------------------------------------------------------------------------
 
 def _classify_news(headline: str | None) -> bool:
     """Call LLM to classify news freshness. Returns False if LLM unavailable."""
@@ -291,8 +367,11 @@ def write_gainers(gainers: list[dict], target_date: str) -> tuple[int, int]:
                 conn.execute(
                     """INSERT INTO daily_gainers
                        (date, ticker, gap_pct, float_shares, rvol_15m, sector,
-                        market_cap, news_headline, news_fresh, close_price, open_price)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        market_cap, news_headline, news_fresh, close_price, open_price,
+                        high_price, low_price, prev_close, vwap,
+                        dollar_volume, close_location, rs_vs_spy,
+                        shares_outstanding, avg_volume)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (
                         target_date,
                         g['ticker'],
@@ -305,6 +384,15 @@ def write_gainers(gainers: list[dict], target_date: str) -> tuple[int, int]:
                         g['news_fresh'],
                         g['close_price'],
                         g['open_price'],
+                        g.get('high_price'),
+                        g.get('low_price'),
+                        g.get('prev_close'),
+                        g.get('vwap'),
+                        g.get('dollar_volume'),
+                        g.get('close_location'),
+                        g.get('rs_vs_spy'),
+                        g.get('shares_outstanding'),
+                        g.get('avg_volume'),
                     ),
                 )
                 inserted += 1

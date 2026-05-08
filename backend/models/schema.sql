@@ -2,21 +2,42 @@
 -- Applied on startup via init_db() — all statements are idempotent.
 
 CREATE TABLE IF NOT EXISTS daily_gainers (
-    id            SERIAL PRIMARY KEY,
-    date          TEXT    NOT NULL,
-    ticker        TEXT    NOT NULL,
-    gap_pct       DOUBLE PRECISION,
-    float_shares  DOUBLE PRECISION,
-    rvol_15m      DOUBLE PRECISION,
-    sector        TEXT,
-    market_cap    DOUBLE PRECISION,
-    news_headline TEXT,
-    news_fresh    BOOLEAN,
-    close_price   DOUBLE PRECISION,
-    open_price    DOUBLE PRECISION,
-    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    id                  SERIAL PRIMARY KEY,
+    date                TEXT    NOT NULL,
+    ticker              TEXT    NOT NULL,
+    gap_pct             DOUBLE PRECISION,
+    float_shares        DOUBLE PRECISION,
+    rvol_15m            DOUBLE PRECISION,
+    sector              TEXT,
+    market_cap          DOUBLE PRECISION,
+    news_headline       TEXT,
+    news_fresh          BOOLEAN,
+    close_price         DOUBLE PRECISION,
+    open_price          DOUBLE PRECISION,
+    -- Enrichment fields added 2026-05
+    high_price          DOUBLE PRECISION,           -- HOD from Polygon grouped daily
+    low_price           DOUBLE PRECISION,           -- LOD from Polygon grouped daily
+    prev_close          DOUBLE PRECISION,           -- previous day close (used for gap calc)
+    vwap                DOUBLE PRECISION,           -- VWAP from Polygon grouped daily
+    dollar_volume       DOUBLE PRECISION,           -- close × volume (liquidity filter)
+    close_location      DOUBLE PRECISION,           -- (close-low)/(high-low) 0.0–1.0
+    rs_vs_spy           DOUBLE PRECISION,           -- gap_pct minus SPY day return
+    shares_outstanding  DOUBLE PRECISION,           -- total shares outstanding (FMP)
+    avg_volume          DOUBLE PRECISION,           -- 30-day avg volume (FMP volAvg)
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(date, ticker)
 );
+
+-- Idempotent migrations for existing databases
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS high_price         DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS low_price          DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS prev_close         DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS vwap               DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS dollar_volume      DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS close_location     DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS rs_vs_spy          DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS shares_outstanding DOUBLE PRECISION;
+ALTER TABLE daily_gainers ADD COLUMN IF NOT EXISTS avg_volume         DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_gainers_date   ON daily_gainers(date);
 CREATE INDEX IF NOT EXISTS idx_gainers_ticker ON daily_gainers(ticker);

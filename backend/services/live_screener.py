@@ -260,28 +260,21 @@ def get_live_gainers() -> dict:
 
 def _do_persist(target_date: str):
     """
-    Enrich the cached tickers with yfinance and write to daily_gainers.
+    Run the full Polygon+FMP enrichment pipeline and write to daily_gainers.
     Runs in a background thread at 8:00 PM ET.
     """
     log.info(f"[LiveScreener] Starting EOD persist for {target_date}")
-    with _cache_lock:
-        tickers = list(_cache['raw_tickers'])
 
-    if not tickers:
-        log.warning("[LiveScreener] No cached tickers to persist")
-        return
-
-    # Reuse the enrichment logic from ingest_gainers
     try:
         import sys, os
         sys.path.insert(0, os.path.dirname(__file__))
-        from jobs.ingest_gainers import _enrich_with_yfinance, write_gainers
-        gainers = _enrich_with_yfinance(tickers[:50], target_date)
+        from jobs.ingest_gainers import fetch_gainers, write_gainers
+        gainers = fetch_gainers(target_date)
         if gainers:
             inserted, skipped = write_gainers(gainers, target_date)
             log.info(f"[LiveScreener] EOD persist done — inserted={inserted} skipped={skipped}")
         else:
-            log.warning("[LiveScreener] yfinance enrichment returned no gainers")
+            log.warning("[LiveScreener] Enrichment pipeline returned no qualified gainers")
     except Exception as e:
         log.error(f"[LiveScreener] EOD persist failed: {e}", exc_info=True)
 

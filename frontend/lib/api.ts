@@ -19,6 +19,16 @@ export interface Gainer {
   news_fresh: boolean | null
   close_price: number | null
   open_price: number | null
+  // Enrichment fields (2026-05)
+  high_price: number | null
+  low_price: number | null
+  prev_close: number | null
+  vwap: number | null
+  dollar_volume: number | null
+  close_location: number | null   // 0.0–1.0, where 1.0 = closed at HOD
+  rs_vs_spy: number | null        // stock gap_pct minus SPY day return
+  shares_outstanding: number | null
+  avg_volume: number | null
   created_at: string
 }
 
@@ -81,6 +91,15 @@ export interface GainerSummary {
     news_fresh: boolean | null
     close_price: number | null
     open_price: number | null
+    high_price: number | null
+    low_price: number | null
+    prev_close: number | null
+    vwap: number | null
+    dollar_volume: number | null
+    close_location: number | null
+    rs_vs_spy: number | null
+    shares_outstanding: number | null
+    avg_volume: number | null
   }>
 }
 
