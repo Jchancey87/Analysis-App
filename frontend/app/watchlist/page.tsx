@@ -94,58 +94,64 @@ function WatchlistRow({
     : null
 
   return (
-    <div className="group flex items-center gap-4 px-4 py-3 bg-gray-900/60 border border-gray-800 rounded-xl hover:border-gray-700 hover:bg-gray-900 transition-all">
+    <tr className="group hover:bg-gray-800/40 transition-colors border-b border-gray-800/50 last:border-0">
       {/* Ticker */}
-      <div className="w-20 shrink-0">
-        <span className="text-base font-bold text-white tracking-wide">{item.ticker}</span>
+      <td className="px-4 py-3 align-top w-28">
+        <span className="text-sm font-bold text-white tracking-wide font-mono">{item.ticker}</span>
         {item.sector && (
-          <p className="text-[10px] text-gray-500 truncate mt-0.5">{item.sector}</p>
+          <p className="text-[10px] text-gray-600 truncate mt-0.5 uppercase font-medium">{item.sector}</p>
         )}
-      </div>
+      </td>
 
       {/* Notes */}
-      <div className="flex-1 min-w-0">
+      <td className="px-4 py-3 align-top min-w-0 max-w-md">
         {item.notes ? (
-          <p className="text-xs text-gray-400 truncate">{item.notes}</p>
+          <p className="text-xs text-gray-400 leading-relaxed">{item.notes}</p>
         ) : (
           <p className="text-xs text-gray-600 italic">No notes</p>
         )}
-      </div>
+      </td>
 
       {/* Tags */}
-      <div className="hidden md:flex items-center gap-1.5 flex-wrap">
-        {tags.length > 0
-          ? tags.map(t => <TagBadge key={t} tag={t} />)
-          : <span className="text-[11px] text-gray-600">—</span>
-        }
-      </div>
+      <td className="px-4 py-3 align-top hidden md:table-cell">
+        <div className="flex flex-wrap gap-1">
+          {tags.length > 0
+            ? tags.map(t => <TagBadge key={t} tag={t} />)
+            : <span className="text-[11px] text-gray-600">—</span>
+          }
+        </div>
+      </td>
 
       {/* Meta */}
-      <div className="hidden lg:flex flex-col items-end text-[10px] text-gray-600 shrink-0">
-        <span>Added {added}</span>
-        {viewed && <span>Viewed {viewed}</span>}
-      </div>
+      <td className="px-4 py-3 align-top hidden lg:table-cell w-32">
+        <div className="flex flex-col text-[10px] text-gray-600">
+          <span>Added {added}</span>
+          {viewed && <span>Viewed {viewed}</span>}
+        </div>
+      </td>
 
       {/* Actions */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <button
-          id={`research-${item.ticker}`}
-          onClick={() => onResearch(item.ticker)}
-          title="Open Research"
-          className="p-1.5 rounded-lg text-gray-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
-        >
-          <ExternalLink size={14} />
-        </button>
-        <button
-          id={`remove-${item.ticker}`}
-          onClick={() => onRemove(item.ticker)}
-          title="Remove"
-          className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-    </div>
+      <td className="px-4 py-3 align-top w-20">
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+          <button
+            id={`research-${item.ticker}`}
+            onClick={() => onResearch(item.ticker)}
+            title="Open Research"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+          >
+            <ExternalLink size={14} />
+          </button>
+          <button
+            id={`remove-${item.ticker}`}
+            onClick={() => onRemove(item.ticker)}
+            title="Remove"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -169,57 +175,58 @@ function PickRow({
     : 'text-gray-300'
 
   return (
-    <div className="group flex items-center gap-4 px-4 py-3 bg-gradient-to-r from-yellow-500/5 to-transparent border border-yellow-500/20 rounded-xl hover:border-yellow-500/40 hover:from-yellow-500/10 transition-all">
+    <tr className="group hover:bg-yellow-500/5 transition-colors border-b border-gray-800/50 last:border-0">
       {/* Rank */}
-      <div className="shrink-0 w-8 text-center">
+      <td className="px-4 py-3 align-middle w-12 text-center">
         <RankBadge rank={pick.rank} />
-      </div>
+      </td>
 
       {/* Ticker + date */}
-      <div className="w-24 shrink-0">
-        <span className="text-base font-bold text-white tracking-wide">{pick.ticker}</span>
+      <td className="px-4 py-3 align-middle w-28">
+        <span className="text-sm font-bold text-white tracking-wide font-mono">{pick.ticker}</span>
         <p className="text-[10px] text-gray-500 mt-0.5">{date}</p>
-      </div>
+      </td>
 
       {/* Reason */}
-      <div className="flex-1 min-w-0">
+      <td className="px-4 py-3 align-middle min-w-0 max-w-md">
         <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">{pick.reason ?? '—'}</p>
-      </div>
+      </td>
 
       {/* Metrics */}
-      <div className="hidden md:flex items-center gap-1.5 shrink-0">
-        {pick.gap_pct != null && (
-          <MetricPill label="Gap" value={`${pick.gap_pct.toFixed(1)}%`} color={gapColor} />
-        )}
-        {pick.float_shares != null && (
-          <MetricPill label="Float" value={fmt(pick.float_shares)} color="text-blue-300" />
-        )}
-        {pick.rvol_15m != null && (
-          <MetricPill label="RVOL" value={`${pick.rvol_15m.toFixed(1)}x`} color={rvolColor} />
-        )}
-        {pick.sector && (
-          <MetricPill label="" value={pick.sector} />
-        )}
-      </div>
+      <td className="px-4 py-3 align-middle hidden md:table-cell">
+        <div className="flex items-center gap-1.5">
+          {pick.gap_pct != null && (
+            <MetricPill label="Gap" value={`${pick.gap_pct.toFixed(1)}%`} color={gapColor} />
+          )}
+          {pick.float_shares != null && (
+            <MetricPill label="Float" value={fmt(pick.float_shares)} color="text-blue-300" />
+          )}
+          {pick.rvol_15m != null && (
+            <MetricPill label="RVOL" value={`${pick.rvol_15m.toFixed(1)}x`} color={rvolColor} />
+          )}
+        </div>
+      </td>
 
       {/* Actions */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <button
-          onClick={() => onResearch(pick.ticker)}
-          title="Run Research"
-          className="p-1.5 rounded-lg text-gray-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
-        >
-          <ExternalLink size={14} />
-        </button>
-        <button
-          onClick={() => onDismiss(pick.id)}
-          title="Dismiss Pick"
-          className="p-1.5 rounded-lg text-gray-500 hover:text-orange-400 hover:bg-orange-500/10 transition-colors"
-        >
-          <X size={14} />
-        </button>
-      </div>
-    </div>
+      <td className="px-4 py-3 align-middle w-24">
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+          <button
+            onClick={() => onResearch(pick.ticker)}
+            title="Run Research"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+          >
+            <ExternalLink size={14} />
+          </button>
+          <button
+            onClick={() => onDismiss(pick.id)}
+            title="Dismiss Pick"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-orange-400 hover:bg-orange-500/10 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -346,15 +353,28 @@ export default function WatchlistPage() {
             <p className="text-xs text-gray-600">They populate automatically after the 8 PM nightly report runs.</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {activePicks.map(pick => (
-              <PickRow
-                key={pick.id}
-                pick={pick}
-                onDismiss={handleDismissPick}
-                onResearch={handleResearch}
-              />
-            ))}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-lg shadow-yellow-500/5">
+            <table className="w-full text-left">
+              <thead className="border-b border-gray-800 bg-gray-900/80">
+                <tr className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">
+                  <th className="px-4 py-3 w-12 text-center">Rank</th>
+                  <th className="px-4 py-3 w-28">Ticker</th>
+                  <th className="px-4 py-3">Selection Reason</th>
+                  <th className="px-4 py-3 hidden md:table-cell">Key Metrics</th>
+                  <th className="px-4 py-3 text-right" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/60">
+                {activePicks.map(pick => (
+                  <PickRow
+                    key={pick.id}
+                    pick={pick}
+                    onDismiss={handleDismissPick}
+                    onResearch={handleResearch}
+                  />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
@@ -510,41 +530,43 @@ export default function WatchlistPage() {
           </div>
         </div>
 
-        {/* Column header */}
-        {filteredItems.length > 0 && (
-          <div className="grid grid-cols-[80px_1fr_auto_auto_auto] gap-4 px-4 mb-1 text-[10px] text-gray-600 uppercase tracking-wide font-semibold">
-            <span>Ticker</span>
-            <span>Notes</span>
-            <span className="hidden md:block">Tags</span>
-            <span className="hidden lg:block">Added</span>
-            <span />
-          </div>
-        )}
-
         {/* List */}
-        {loading ? (
-          <div className="text-center py-8 text-gray-600 text-sm animate-pulse">Loading…</div>
-        ) : filteredItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 bg-gray-900/40 border border-dashed border-gray-800 rounded-xl gap-3">
-            <Bookmark size={28} className="text-gray-700" />
-            <p className="text-sm text-gray-500">
-              {items.length === 0
-                ? 'Your watchlist is empty. Add a ticker to get started.'
-                : 'No tickers match the current filter.'}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {filteredItems.map(item => (
-              <WatchlistRow
-                key={item.ticker}
-                item={item}
-                onRemove={handleRemove}
-                onResearch={handleResearch}
-              />
-            ))}
-          </div>
-        )}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+          {loading ? (
+            <div className="text-center py-12 text-gray-600 text-sm animate-pulse">Loading…</div>
+          ) : filteredItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 border-b border-gray-800 last:border-0">
+              <Bookmark size={28} className="text-gray-700" />
+              <p className="text-sm text-gray-500">
+                {items.length === 0
+                  ? 'Your watchlist is empty. Add a ticker to get started.'
+                  : 'No tickers match the current filter.'}
+              </p>
+            </div>
+          ) : (
+            <table className="w-full text-left">
+              <thead className="border-b border-gray-800 bg-gray-900/80">
+                <tr className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">
+                  <th className="px-4 py-3">Ticker</th>
+                  <th className="px-4 py-3">Notes</th>
+                  <th className="px-4 py-3 hidden md:table-cell">Tags</th>
+                  <th className="px-4 py-3 hidden lg:table-cell">Added</th>
+                  <th className="px-4 py-3 text-right" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/60">
+                {filteredItems.map(item => (
+                  <WatchlistRow
+                    key={item.ticker}
+                    item={item}
+                    onRemove={handleRemove}
+                    onResearch={handleResearch}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </section>
     </div>
   )

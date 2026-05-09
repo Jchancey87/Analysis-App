@@ -37,10 +37,12 @@ PERSIST_HOUR_ET   = 20           # 8:00 PM Eastern — after-hours close
 PERSIST_MINUTE_ET = 0
 
 # Screening thresholds (same as ingest job)
-MIN_GAP_PCT    = 5.0    # Looser for live — we show more and let user filter
-MAX_FLOAT_M    = 100.0
-MIN_RVOL       = 1.5
-MAX_MARKET_CAP = 1_000e6  # $1B cap for live screener
+MIN_GAP_PCT    = 5.0    # Show anything > 5% gap
+MAX_FLOAT_M    = 200.0  # < 200M shares
+MIN_RVOL       = 2.0    # > 2x RVOL
+MIN_PRICE      = 2.0    # >= $2
+MAX_PRICE      = 20.0   # <= $20
+MAX_MARKET_CAP = 1_000e6 # < $1B
 
 TOP_N           = 10    # Number of tickers to surface in the live panel
 POLYGON_LIMIT   = 50    # How many tickers to pull from Polygon snapshot
@@ -164,6 +166,10 @@ def _enrich_snapshot_tickers(raw_tickers: list[dict]) -> list[dict]:
             # extended-hours move, not just the gap at open
             gap_pct = round(((last_price - prev_close) / prev_close) * 100, 2)
             if gap_pct < MIN_GAP_PCT:
+                continue
+
+            # ── Price Filter ───────────────────────────────────────────────────────
+            if last_price < MIN_PRICE or last_price > MAX_PRICE:
                 continue
 
             gainers.append({

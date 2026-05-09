@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 
 const links = [
-  { href: '/history',      label: 'Command Center', icon: LayoutDashboard },
+  { href: '/',             label: 'Dashboard',      icon: LayoutDashboard },
+  { href: '/history',      label: 'Command Center', icon: LayoutGrid },
   { href: '/daily-charts', label: 'Daily Charts',   icon: AreaChart },
   { href: '/charts',       label: 'Charts',       icon: Camera },
   { href: '/research',     label: 'Research',     icon: Search },
@@ -20,10 +21,10 @@ export default function NavBar() {
   return (
     <nav className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-50">
       <div className="max-w-screen-2xl mx-auto px-4 flex items-center gap-1 h-14">
-        <div className="flex items-center gap-2 mr-6">
+        <Link href="/" className="flex items-center gap-2 mr-6 hover:opacity-80 transition-opacity">
           <BarChart2 className="text-emerald-400" size={22} />
           <span className="font-semibold tracking-tight text-white">TradeJournal</span>
-        </div>
+        </Link>
         {links.map(({ href, label, icon: Icon }) => (
           <Link
             key={href}

@@ -37,10 +37,12 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Screening criteria constants
 # ---------------------------------------------------------------------------
-MIN_GAP_PCT    = 10.0   # > 10% gap
-MAX_FLOAT_M    = 50.0   # < 50M shares (wider net; filter further in UI)
-MIN_RVOL       = 2.0    # > 2x RVOL (hard filter at ingest)
-MAX_MARKET_CAP = 500e6  # < $500M
+MIN_GAP_PCT    = 5.0    # Show anything > 5% gap
+MAX_FLOAT_M    = 200.0  # < 200M shares
+MIN_RVOL       = 2.0    # > 2x RVOL
+MIN_PRICE      = 2.0    # >= $2
+MAX_PRICE      = 20.0   # <= $20
+MAX_MARKET_CAP = 1_000e6 # < $1B
 
 POLYGON_SNAPSHOT_LIMIT = 50   # tickers to pull from Polygon gainers snapshot
 
@@ -197,6 +199,10 @@ def _enrich_ticker(snap: dict, grouped: dict[str, dict], target_date: str) -> di
 
     gap_pct = round(((last_price - prev_close) / prev_close) * 100, 2)
     if gap_pct < MIN_GAP_PCT:
+        return None
+
+    # ── Price Filter ───────────────────────────────────────────────────────
+    if last_price < MIN_PRICE or last_price > MAX_PRICE:
         return None
 
     # ── OHLCV from Grouped Daily (authoritative EOD bars) ─────────────────

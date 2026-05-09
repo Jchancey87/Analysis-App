@@ -183,6 +183,8 @@ def ticker_history():
     max_float_m = request.args.get('max_float', type=float)
     min_rvol    = request.args.get('min_rvol',  type=float)
     sector      = request.args.get('sector')
+    min_price   = request.args.get('min_price', type=float)
+    max_price   = request.args.get('max_price', type=float)
 
     # Period cutoff
     cutoff = None
@@ -220,6 +222,12 @@ def ticker_history():
     if sector:
         conditions.append('sector = %s')
         params.append(sector)
+    if min_price:
+        conditions.append('close_price >= %s')
+        params.append(min_price)
+    if max_price:
+        conditions.append('close_price <= %s')
+        params.append(max_price)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 

@@ -64,7 +64,21 @@ export default async function DashboardPage() {
         <LiveGainers />
       </section>
 
-      {/* ── Row 2: Watchlist quick-access + Recent observations ── */}
+      {/* ── Row 2: Float × RVOL Heatmap (Full Width) ── */}
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide flex items-center gap-2">
+            <LayoutGrid size={14} className="text-emerald-400" />
+            Float × RVOL Heatmap
+          </h2>
+          <div className="text-[10px] text-gray-500 font-medium bg-gray-800 px-2 py-0.5 rounded">
+            MARKET CHARACTERISTICS
+          </div>
+        </div>
+        <HeatMap period="all" height={340} />
+      </section>
+
+      {/* ── Row 3: Watchlist quick-access + Recent observations ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
           <SectionHeader icon={Bookmark} label="Watchlist" href="/watchlist" />
@@ -77,14 +91,14 @@ export default async function DashboardPage() {
         </section>
       </div>
 
-      {/* ── Row 3: Archetype stats + Heatmap ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* ── Row 4: Archetype stats ── */}
+      <div className="grid grid-cols-1 gap-6">
         <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
           <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">Archetype Stats</h2>
           {archetypes.length === 0 ? (
             <p className="text-gray-600 text-sm">No chart captures yet. Upload your first chart to see patterns.</p>
           ) : (
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {archetypes.map((a: any) => (
                 <div key={a.tag} className="flex items-center justify-between bg-gray-800/60 rounded-lg px-3 py-2">
                   <span className="text-sm font-medium text-gray-200">{a.tag}</span>
@@ -92,17 +106,11 @@ export default async function DashboardPage() {
                     <span>n={a.count}</span>
                     {a.avg_gap_pct    != null && <span className="text-emerald-400">+{a.avg_gap_pct}%</span>}
                     {a.avg_float_m    != null && <span>{a.avg_float_m}M float</span>}
-                    {a.avg_cleanliness != null && <span>⭐ {a.avg_cleanliness}/10</span>}
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </section>
-
-        <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">Float × RVOL Heatmap</h2>
-          <HeatMap spec={heatmapSpec} />
         </section>
       </div>
 

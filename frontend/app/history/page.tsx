@@ -259,11 +259,13 @@ export default function HistoryPage() {
   const [sort,     setSort]     = useState<SortKey>('last_seen')
   const [search,   setSearch]   = useState('')
 
-  // Gainer-style filters
+  // Gainer-style filters with new defaults
   const [date,      setDate]     = useState('')
   const [minGap,    setMinGap]   = useState('')
-  const [maxFloat,  setMaxFloat] = useState('')
-  const [minRvol,   setMinRvol]  = useState('')
+  const [maxFloat,  setMaxFloat] = useState('200')
+  const [minRvol,   setMinRvol]  = useState('2')
+  const [minPrice,  setMinPrice] = useState('2')
+  const [maxPrice,  setMaxPrice] = useState('20')
   const [sector,    setSector]   = useState('')
 
   const searchRef = useRef<HTMLInputElement>(null)
@@ -281,7 +283,9 @@ export default function HistoryPage() {
           max_float: maxFloat ? Number(maxFloat) : undefined,
           min_rvol:  minRvol ? Number(minRvol) : undefined,
           sector:    sector || undefined,
-          limit:     300,
+          min_price: minPrice ? Number(minPrice) : undefined,
+          max_price: maxPrice ? Number(maxPrice) : undefined,
+          limit:     10, // User wants Top 10 focus
         }),
         getSectors()
       ])
@@ -290,7 +294,7 @@ export default function HistoryPage() {
     } finally {
       setLoading(false)
     }
-  }, [period, sort, search, date, minGap, maxFloat, minRvol, sector])
+  }, [period, sort, search, date, minGap, maxFloat, minRvol, sector, minPrice, maxPrice])
 
   useEffect(() => { load() }, [load])
 
@@ -317,7 +321,7 @@ export default function HistoryPage() {
         </div>
         <div className="flex gap-2 mt-1">
           <a
-            href={getGainersExportUrl({ date, min_gap: minGap, max_float: maxFloat, min_rvol: minRvol, sector })}
+            href={getGainersExportUrl({ date, min_gap: minGap, max_float: maxFloat, min_rvol: minRvol, sector, min_price: minPrice, max_price: maxPrice })}
             download="history_export.csv"
             className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs hover:bg-emerald-600/20 transition-colors"
           >
@@ -381,7 +385,7 @@ export default function HistoryPage() {
         </div>
 
         {/* Multi-Filter Bar */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-gray-900/50 border border-gray-800 rounded-xl p-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 bg-gray-900/50 border border-gray-800 rounded-xl p-3">
           <div className="space-y-1">
             <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Specific Date</label>
             <input
@@ -392,14 +396,24 @@ export default function HistoryPage() {
             />
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Min Gap %</label>
-            <input
-              type="number"
-              placeholder="e.g. 20"
-              value={minGap}
-              onChange={e => setMinGap(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-            />
+            <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Price Range</label>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                placeholder="Min"
+                value={minPrice}
+                onChange={e => setMinPrice(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+              />
+              <span className="text-gray-600">-</span>
+              <input
+                type="number"
+                placeholder="Max"
+                value={maxPrice}
+                onChange={e => setMaxPrice(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+              />
+            </div>
           </div>
           <div className="space-y-1">
             <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Max Float (M)</label>
@@ -421,21 +435,21 @@ export default function HistoryPage() {
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1 min-w-0">
             <label className="text-[10px] uppercase font-bold text-gray-500 ml-1">Sector</label>
             <div className="flex gap-2">
               <select
                 value={sector}
                 onChange={e => setSector(e.target.value)}
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500 min-w-0"
               >
                 <option value="">All Sectors</option>
                 {sectors.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              {(date || minGap || maxFloat || minRvol || sector) && (
+              {(date || minGap || maxFloat || minRvol || sector || minPrice || maxPrice) && (
                 <button
-                  onClick={() => { setDate(''); setMinGap(''); setMaxFloat(''); setMinRvol(''); setSector('') }}
-                  className="px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-[10px] text-gray-400 hover:text-white"
+                  onClick={() => { setDate(''); setMinGap(''); setMaxFloat(''); setMinRvol(''); setSector(''); setMinPrice(''); setMaxPrice('') }}
+                  className="px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-[10px] text-gray-400 hover:text-white shrink-0"
                 >
                   RESET
                 </button>

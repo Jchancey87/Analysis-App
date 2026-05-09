@@ -321,26 +321,26 @@ export default function ResearchPage() {
       </div>
 
       {/* Search Bar */}
-      <form onSubmit={handleSearch} className="space-y-3">
-        <div className="flex gap-3">
-          {/* Ticker */}
-          <div className="relative flex-1 group">
-            <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-gray-500 group-focus-within:text-emerald-500 transition-colors">
-              <Search size={20} />
-            </div>
-            <input
-              id="research-ticker-input"
-              type="text"
-              value={ticker}
-              onChange={(e) => setTicker(e.target.value.toUpperCase())}
-              placeholder="TICKER (e.g. NVDA, TSLA, GME)"
-              className="w-full bg-gray-900 border-2 border-gray-800 rounded-2xl py-4 pl-12 pr-4 text-xl font-bold tracking-widest text-white focus:outline-none focus:border-emerald-500 transition-all shadow-xl"
-              disabled={anyActive}
-            />
+      <form onSubmit={handleSearch} className="space-y-4">
+        {/* Ticker - Now Full Width */}
+        <div className="relative group">
+          <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-gray-500 group-focus-within:text-emerald-500 transition-colors">
+            <Search size={24} />
           </div>
+          <input
+            id="research-ticker-input"
+            type="text"
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            placeholder="TICKER (e.g. NVDA, TSLA, GME)"
+            className="w-full bg-gray-900 border-2 border-gray-800 rounded-2xl py-5 pl-14 pr-4 text-2xl font-bold tracking-widest text-white focus:outline-none focus:border-emerald-500 transition-all shadow-xl placeholder:text-gray-700"
+            disabled={anyActive}
+          />
+        </div>
 
+        <div className="flex flex-col sm:flex-row gap-3 items-center justify-center">
           {/* Optional date picker */}
-          <div className="relative group">
+          <div className="relative group w-full sm:w-auto">
             <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-gray-600 group-focus-within:text-blue-400 transition-colors">
               <CalendarDays size={16} />
             </div>
@@ -349,7 +349,7 @@ export default function ResearchPage() {
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="bg-gray-900 border-2 border-gray-800 rounded-2xl py-4 pl-9 pr-4 text-sm text-gray-400 focus:outline-none focus:border-blue-500 transition-all shadow-xl w-44"
+              className="bg-gray-900 border-2 border-gray-800 rounded-2xl py-3 pl-10 pr-4 text-sm text-gray-400 focus:outline-none focus:border-blue-500 transition-all shadow-xl w-full sm:w-48"
               disabled={anyActive}
               title="Optional: anchor analysis to a specific trading date"
             />
@@ -360,13 +360,14 @@ export default function ResearchPage() {
             id="research-analyze-btn"
             type="submit"
             disabled={anyActive || !ticker}
-            className="px-8 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-bold rounded-2xl transition-all flex items-center gap-2 shadow-xl"
+            className="w-full sm:w-auto px-12 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl"
           >
             {anyActive
               ? <Loader2 className="animate-spin" size={18} />
               : 'ANALYZE'}
           </button>
         </div>
+
         {date && (
           <p className="text-xs text-gray-600 text-center">
             Catalyst analysis anchored to <span className="text-blue-400 font-mono">{date}</span>
@@ -583,7 +584,7 @@ export default function ResearchPage() {
         </>
       ) : (
         /* Empty state — placeholder cards */
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             {
               Icon: ShieldAlert,
