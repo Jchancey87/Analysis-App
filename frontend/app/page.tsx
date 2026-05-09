@@ -5,7 +5,7 @@ import WatchlistQuickAccess from '@/components/WatchlistQuickAccess'
 import RecentObservations from '@/components/RecentObservations'
 import SystemStatus from '@/components/SystemStatus'
 import { getHeatmap, getArchetypes } from '@/lib/api'
-import { TrendingUp, Bookmark, FileText, Activity } from 'lucide-react'
+import { TrendingUp, Bookmark, FileText, Activity, LayoutGrid } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 

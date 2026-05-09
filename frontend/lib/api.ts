@@ -175,6 +175,8 @@ export const getTickerHistory = (params?: {
   max_float?: number
   min_rvol?:  number
   sector?:    string
+  min_price?: number
+  max_price?: number
 }) => api.get<TickerHistoryItem[]>('/api/gainers/ticker-history', { params }).then(r => r.data)
 
 export const getTickerAppearances = (ticker: string, period?: string) =>
