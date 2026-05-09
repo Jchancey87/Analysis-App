@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getRepeatRunners, RepeatRunner } from '@/lib/api'
-import { RotateCcw, ExternalLink } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 
 function fmt(n: number | null, suffix = '') {
   if (n == null) return '—'
@@ -29,7 +29,7 @@ export default function RepeatRunnerAlert() {
 
   if (runners.length === 0) return (
     <div className="flex items-center justify-center h-20 text-gray-700 text-xs">
-      No repeat runners in today's live scan
+      No repeat runners in today&apos;s live scan
     </div>
   )
 

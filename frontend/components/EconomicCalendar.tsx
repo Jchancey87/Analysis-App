@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { getEconomicCalendar, EconomicEvent } from '@/lib/api'
-import { CalendarDays, AlertTriangle, Info } from 'lucide-react'
+import { AlertTriangle, Info } from 'lucide-react'
 
 function daysUntil(dateStr: string): number {
   const today = new Date()
