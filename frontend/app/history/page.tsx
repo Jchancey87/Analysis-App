@@ -255,7 +255,7 @@ export default function HistoryPage() {
   const [items,    setItems]    = useState<TickerHistoryItem[]>([])
   const [sectors,  setSectors]  = useState<string[]>([])
   const [loading,  setLoading]  = useState(true)
-  const [period,   setPeriod]   = useState<Period>('all')
+  const [period,   setPeriod]   = useState<Period>('week')
   const [sort,     setSort]     = useState<SortKey>('last_seen')
   const [search,   setSearch]   = useState('')
 
@@ -285,7 +285,6 @@ export default function HistoryPage() {
           sector:    sector || undefined,
           min_price: minPrice ? Number(minPrice) : undefined,
           max_price: maxPrice ? Number(maxPrice) : undefined,
-          limit:     10, // User wants Top 10 focus
         }),
         getSectors()
       ])

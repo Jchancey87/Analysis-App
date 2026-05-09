@@ -177,7 +177,7 @@ def ticker_history():
     period      = (request.args.get('period') or 'all').lower()
     search      = (request.args.get('search') or '').upper().strip()
     sort        = (request.args.get('sort')   or 'last_seen').lower()
-    limit       = request.args.get('limit', 200, type=int)
+    limit       = request.args.get('limit', 500, type=int)
     exact_date  = request.args.get('date')
     min_gap     = request.args.get('min_gap',   type=float)
     max_float_m = request.args.get('max_float', type=float)
@@ -186,9 +186,9 @@ def ticker_history():
     min_price   = request.args.get('min_price', type=float)
     max_price   = request.args.get('max_price', type=float)
 
-    # Period cutoff
+    # Period cutoff - Ignored if searching for a specific ticker
     cutoff = None
-    if not exact_date:
+    if not exact_date and not search:
         today  = datetime.utcnow().date()
         if period == 'week':
             cutoff = (today - timedelta(days=7)).isoformat()
