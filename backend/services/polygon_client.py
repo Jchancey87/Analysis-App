@@ -13,7 +13,13 @@ import logging
 from typing import Optional
 
 from massive import RESTClient
+from pydantic import TypeAdapter, ValidationError
 from config import Config
+from validation.external_schemas import (
+    MassiveAgg,
+    MassiveSnapshotTicker,
+    MassiveTickerDetails,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,25 +46,20 @@ def get_gainers_snapshot(include_otc: bool = False) -> list[dict]:
     client = _make_client()
     try:
         resp = client.get_snapshot_direction("stocks", "gainers", include_otc=include_otc)
-        # SDK returns an iterable of TickerSnapshot objects; coerce to dicts
+        # SDK returns an iterable of TickerSnapshot objects
         tickers = []
         for snap in (resp or []):
-            tickers.append(_snap_to_dict(snap))
+            try:
+                # Validate and dump to dict
+                m = MassiveSnapshotTicker.model_validate(snap)
+                tickers.append(m.model_dump())
+            except ValidationError as exc:
+                log.warning(f"[Polygon] gainer snapshot row validation failed: {exc}")
+                continue
         return tickers
     except Exception as e:
         log.warning(f"[Polygon] gainers snapshot failed: {e}")
         return []
-
-
-def _snap_to_dict(snap) -> dict:
-    """Normalise a TickerSnapshot object (or plain dict) to a plain dict."""
-    if isinstance(snap, dict):
-        return snap
-    # SDK model objects expose attributes; convert via __dict__ if available
-    try:
-        return snap.__dict__
-    except Exception:
-        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -81,25 +82,23 @@ def get_grouped_daily(date: str, adjusted: bool = True, include_otc: bool = Fals
         results = resp.results if hasattr(resp, "results") else (resp or [])
         out = {}
         for bar in results:
-            if isinstance(bar, dict):
-                sym = bar.get("T")
-                if sym:
-                    out[sym] = bar
-            else:
-                # SDK model object
+            try:
+                # The SDK grouped daily bars use ticker/T interchangeably;
+                # MassiveAgg handles this via populate_by_name if we map it,
+                # but for simplicity we just validate the OHLCV part.
+                m = MassiveAgg.model_validate(bar)
+                # Ticker is usually .ticker or .T
                 sym = getattr(bar, "ticker", None) or getattr(bar, "T", None)
+                if not sym and isinstance(bar, dict):
+                    sym = bar.get("T") or bar.get("ticker")
+
                 if sym:
-                    out[sym] = {
-                        "T":  sym,
-                        "o":  getattr(bar, "open",   None),
-                        "h":  getattr(bar, "high",   None),
-                        "l":  getattr(bar, "low",    None),
-                        "c":  getattr(bar, "close",  None),
-                        "v":  getattr(bar, "volume", None),
-                        "vw": getattr(bar, "vwap",   None),
-                        "t":  getattr(bar, "timestamp", None),
-                        "n":  getattr(bar, "transactions", None),
-                    }
+                    d = m.model_dump()
+                    d["T"] = sym
+                    out[sym] = d
+            except ValidationError:
+                continue
+
         log.info(f"[Polygon] grouped daily {date}: {len(out)} bars")
         return out
     except Exception as e:
@@ -123,15 +122,11 @@ def get_minute_bars(ticker: str, start: str, end: str, limit: int = 50_000) -> l
         to=end,
         limit=limit,
     ):
-        bars.append({
-            "t":  getattr(bar, "timestamp", None),
-            "o":  getattr(bar, "open",      None),
-            "h":  getattr(bar, "high",      None),
-            "l":  getattr(bar, "low",       None),
-            "c":  getattr(bar, "close",     None),
-            "v":  getattr(bar, "volume",    None),
-            "vw": getattr(bar, "vwap",      None),
-        })
+        try:
+            m = MassiveAgg.model_validate(bar)
+            bars.append(m.model_dump())
+        except ValidationError:
+            continue
     return bars
 
 
@@ -147,15 +142,11 @@ def get_daily_bars(ticker: str, start: str, end: str, limit: int = 5_000) -> lis
         to=end,
         limit=limit,
     ):
-        bars.append({
-            "t":  getattr(bar, "timestamp", None),
-            "o":  getattr(bar, "open",      None),
-            "h":  getattr(bar, "high",      None),
-            "l":  getattr(bar, "low",       None),
-            "c":  getattr(bar, "close",     None),
-            "v":  getattr(bar, "volume",    None),
-            "vw": getattr(bar, "vwap",      None),
-        })
+        try:
+            m = MassiveAgg.model_validate(bar)
+            bars.append(m.model_dump())
+        except ValidationError:
+            continue
     return bars
 
 
@@ -214,16 +205,23 @@ def get_ticker_details(ticker: str) -> dict:
         res = client.get_ticker_details(ticker.upper())
         if not res:
             return {}
+
+        try:
+            m = MassiveTickerDetails.model_validate(res)
+        except ValidationError as exc:
+            log.warning(f"[Polygon] ticker details validation failed for {ticker}: {exc}")
+            return {}
+
         return {
-            "ticker":             getattr(res, "ticker",                     None),
-            "company_name":       getattr(res, "name",                       None),
-            "sector":             getattr(res, "sic_description",            None),
-            "industry":           getattr(res, "sic_description",            None),
-            "description":        getattr(res, "description",                None),
+            "ticker":             m.ticker,
+            "company_name":       m.name,
+            "sector":             m.sic_description,
+            "industry":           m.sic_description,
+            "description":        m.description,
             "market_cap":         None,   # not in reference endpoint
             "float_shares":       None,
-            "shares_outstanding": getattr(res, "weighted_shares_outstanding", None),
-            "exchange":           getattr(res, "primary_exchange",           None),
+            "shares_outstanding": m.weighted_shares_outstanding,
+            "exchange":           m.primary_exchange,
             "_source":            "polygon",
         }
     except Exception as e:

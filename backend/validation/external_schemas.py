@@ -41,7 +41,11 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 class _BaseExternal(BaseModel):
     """Base for all external API schemas: ignore unknown fields."""
-    model_config = ConfigDict(extra='ignore', populate_by_name=True)
+    model_config = ConfigDict(
+        extra='ignore',
+        populate_by_name=True,
+        from_attributes=True
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -185,6 +189,42 @@ class FMPNewsItem(_BaseExternal):
     url: Optional[str] = None
     publishedDate: Optional[str] = None           # noqa: N815
     site: Optional[str] = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Massive / Polygon — Market Data
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MassiveAgg(_BaseExternal):
+    """One aggregate bar (minute or day)."""
+    t: Optional[int] = None      # timestamp
+    o: Optional[float] = None    # open
+    h: Optional[float] = None    # high
+    l: Optional[float] = None    # low
+    c: Optional[float] = None    # close
+    v: Optional[float] = None    # volume
+    vw: Optional[float] = None   # vwap
+    n: Optional[int] = None      # transactions
+
+
+class MassiveSnapshotTicker(_BaseExternal):
+    """One ticker from the snapshot endpoint."""
+    ticker: Optional[str] = None
+    todaysChangePerc: Optional[float] = None      # noqa: N815
+    todaysChange: Optional[float] = None          # noqa: N815
+    lastTrade: Optional[dict] = None              # noqa: N815
+    day: Optional[dict] = None
+    prevDay: Optional[dict] = None                # noqa: N815
+
+
+class MassiveTickerDetails(_BaseExternal):
+    """Reference data for a ticker."""
+    ticker: Optional[str] = None
+    name: Optional[str] = None
+    sic_description: Optional[str] = None
+    description: Optional[str] = None
+    weighted_shares_outstanding: Optional[float] = None  # noqa: N815
+    primary_exchange: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
