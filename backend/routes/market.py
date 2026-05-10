@@ -31,19 +31,7 @@ INDICES = ['SPY', 'QQQ', 'IWM']
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _fetch_polygon_snapshot(ticker: str) -> dict | None:
-    """Fetch Polygon v2 snapshot for a single ticker."""
-    key = getattr(Config, 'POLYGON_API_KEY', None)
-    if not key:
-        return None
-    try:
-        url = f'https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}'
-        resp = _req.get(url, params={'apiKey': key}, timeout=6)
-        if resp.ok:
-            return resp.json().get('ticker')
-    except Exception as e:
-        log.warning(f'[market] Polygon snapshot error for {ticker}: {e}')
-    return None
+
 
 
 def _bias_label(spy_chg: float | None, vix: float | None) -> str:
@@ -75,12 +63,27 @@ def market_breadth():
     vix     = None
 
     for ticker in INDICES:
-        snap = _fetch_polygon_snapshot(ticker)
+        try:
+            from services.polygon_client import get_ticker_snapshot
+            snap = get_ticker_snapshot(ticker)
+        except Exception as e:
+            log.warning(f'[market] Massive/Polygon snapshot error for {ticker}: {e}')
+            snap = None
+
         if snap:
-            day   = snap.get('day', {})
-            prev  = snap.get('prevDay', {})
-            close = day.get('c') or snap.get('last', {}).get('price')
-            prev_c = prev.get('c')
+            # snap is already normalized by polygon_client.py (RestSnapshotTicker)
+            day   = snap.day if hasattr(snap, 'day') else {}
+            prev  = snap.prev_day if hasattr(snap, 'prev_day') else {}
+            close = snap.last_trade.price if hasattr(snap, 'last_trade') and snap.last_trade else snap.close
+            prev_c = snap.prev_day.close if hasattr(snap, 'prev_day') and snap.prev_day else None
+            
+            # If it's a raw dict from a fallback (unlikely with SDK, but good to handle)
+            if isinstance(snap, dict):
+                day   = snap.get('day', {})
+                prev  = snap.get('prevDay', {})
+                close = day.get('c') or snap.get('last', {}).get('price')
+                prev_c = prev.get('c')
+            
             chg_pct = round((close - prev_c) / prev_c * 100, 2) if close and prev_c else None
             if ticker == 'SPY':
                 spy_chg = chg_pct
@@ -88,7 +91,7 @@ def market_breadth():
                 'ticker':  ticker,
                 'price':   close,
                 'chg_pct': chg_pct,
-                'volume':  day.get('v'),
+                'volume':  day.v if hasattr(day, 'v') else day.get('v') if isinstance(day, dict) else None,
             }
 
     # Fetch VIX separately (^VIX not on Polygon stock snapshot — use a rough proxy)
