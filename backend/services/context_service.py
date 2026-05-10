@@ -2,12 +2,11 @@
 context_service.py — Data gatherer for the Deep Context feature.
 
 Aggregates signals from:
-  - Polygon.io: 1Y daily OHLCV (for SMA/RS calculations)
+  - Massive.com (fka Polygon.io): 1Y daily OHLCV (for SMA/RS calculations)
   - yfinance: 52-week high/low, float, options chain, sector info
   - Our database: historical gainer appearances for this ticker
 """
 import logging
-import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from config import Config
@@ -43,32 +42,31 @@ def build_context_payload(ticker: str) -> dict:
 
 def _get_daily_ohlcv(ticker: str, days: int = 252) -> pd.DataFrame:
     """
-    Fetch daily OHLCV bars from Polygon (primary) or yfinance (fallback).
+    Fetch daily OHLCV bars from Massive.com (fka Polygon.io) via the official
+    SDK adapter (primary) or yfinance (fallback).
     Returns a DataFrame indexed by date with columns: open, high, low, close, volume.
     """
-    # Try Polygon first
-    if Config.POLYGON_API_KEY:
-        try:
-            end   = datetime.utcnow()
-            start = end - timedelta(days=days + 30)
-            url   = (
-                f'https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day'
-                f'/{start.strftime("%Y-%m-%d")}/{end.strftime("%Y-%m-%d")}'
-            )
-            params = {'adjusted': 'true', 'sort': 'asc', 'limit': 5000,
-                      'apiKey': Config.POLYGON_API_KEY}
-            resp = requests.get(url, params=params, timeout=12)
-            resp.raise_for_status()
-            results = resp.json().get('results', [])
-            if results:
-                df = pd.DataFrame(results)
-                df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low',
-                                        'c': 'close', 'v': 'volume', 't': 'ts'})
-                df['date'] = pd.to_datetime(df['ts'], unit='ms').dt.strftime('%Y-%m-%d')
-                df = df.set_index('date')
-                return df[['open', 'high', 'low', 'close', 'volume']]
-        except Exception as e:
-            log.warning(f'[Context] Polygon daily fetch failed: {e}')
+    from services import polygon_client as poly
+
+    # Try Massive SDK first
+    try:
+        end   = datetime.utcnow()
+        start = end - timedelta(days=days + 30)
+        bars  = poly.get_daily_bars(
+            ticker,
+            start.strftime('%Y-%m-%d'),
+            end.strftime('%Y-%m-%d'),
+            limit=5000,
+        )
+        if bars:
+            df = pd.DataFrame(bars)
+            df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low',
+                                    'c': 'close', 'v': 'volume'})
+            df['date'] = pd.to_datetime(df['t'], unit='ms').dt.strftime('%Y-%m-%d')
+            df = df.set_index('date')
+            return df[['open', 'high', 'low', 'close', 'volume']]
+    except Exception as e:
+        log.warning(f'[Context] Massive daily fetch failed: {e}')
 
     # Fallback to yfinance
     try:

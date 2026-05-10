@@ -2,6 +2,8 @@ import json
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 from database import get_connection
+from validation.decorators import validate_body
+from validation.schemas import WatchlistAddBody, WatchlistUpdateBody
 
 watchlist_bp = Blueprint('watchlist', __name__)
 
@@ -24,17 +26,12 @@ def list_watchlist():
 # ---------------------------------------------------------------------------
 
 @watchlist_bp.route('/watchlist', methods=['POST'])
-def add_to_watchlist():
-    data   = request.get_json(silent=True) or {}
-    ticker = (data.get('ticker') or '').upper().strip()
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-
-    sector   = (data.get('sector') or '').strip() or None
-    notes    = (data.get('notes')  or '').strip() or None
-    tags_raw = data.get('tags', [])
-    if not isinstance(tags_raw, list):
-        return jsonify({'error': 'tags must be a JSON array'}), 400
+@validate_body(WatchlistAddBody)
+def add_to_watchlist(data: WatchlistAddBody):
+    ticker   = data.ticker
+    sector   = data.sector
+    notes    = data.notes
+    tags_raw = data.tags
 
     # ── Automatic Enrichment ──────────────────────────────────────────
     # If key data is missing, fetch from FMP + supplement with AI
@@ -46,12 +43,12 @@ def add_to_watchlist():
         if profile:
             if not sector:
                 sector = profile.get('sector')
-            
+
             # If notes or tags are still empty, use AI to summarize the profile
             if not notes or not tags_raw:
                 enrich = get_ticker_enrichment(
-                    ticker, 
-                    profile.get('sector', 'Unknown'), 
+                    ticker,
+                    profile.get('sector', 'Unknown'),
                     profile.get('description') or f"A company in the {profile.get('sector', 'Unknown')} sector."
                 )
                 if not notes:
@@ -59,8 +56,7 @@ def add_to_watchlist():
                 if not tags_raw:
                     tags_raw = enrich.get('tags') or []
 
-    tags_list = tags_raw if isinstance(tags_raw, list) else []
-    tags = json.dumps([str(t).strip() for t in tags_list if str(t).strip()])
+    tags = json.dumps([str(t).strip() for t in tags_raw if str(t).strip()])
 
     now = datetime.now(timezone.utc).isoformat()
     try:
@@ -82,20 +78,17 @@ def add_to_watchlist():
 # ---------------------------------------------------------------------------
 
 @watchlist_bp.route('/watchlist/<ticker>', methods=['PUT'])
-def update_watchlist_item(ticker):
-    ticker = ticker.upper().strip()
-    data   = request.get_json(silent=True) or {}
+@validate_body(WatchlistUpdateBody)
+def update_watchlist_item(data: WatchlistUpdateBody, ticker):
+    ticker  = ticker.upper().strip()
+    updates = {}
 
-    allowed = {'notes', 'tags', 'sector'}
-    updates = {k: v for k, v in data.items() if k in allowed}
-
-    if 'tags' in updates:
-        if not isinstance(updates['tags'], list):
-            return jsonify({'error': 'tags must be a list'}), 400
-        updates['tags'] = json.dumps([str(t).strip() for t in updates['tags'] if str(t).strip()])
-
-    if not updates:
-        return jsonify({'error': 'No valid fields to update'}), 400
+    if data.notes is not None:
+        updates['notes'] = data.notes
+    if data.sector is not None:
+        updates['sector'] = data.sector
+    if data.tags is not None:
+        updates['tags'] = json.dumps(data.tags)
 
     set_clause = ', '.join(f'{k} = %s' for k in updates)
     values     = list(updates.values()) + [ticker]

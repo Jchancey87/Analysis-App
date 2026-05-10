@@ -17,3 +17,5 @@ beautifulsoup4
 lxml
 pytz
 psycopg2-binary
+pydantic>=2.0
+massive>=2.7

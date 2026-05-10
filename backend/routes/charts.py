@@ -4,6 +4,9 @@ from flask import Blueprint, jsonify, request, send_from_directory
 from database import get_connection
 from services.chart_service import validate_tags, save_chart_image, VALID_TAGS
 from config import Config
+from validation.decorators import validate_body
+from validation.schemas import ChartUpdateBody, ChartUploadForm
+from pydantic import ValidationError
 
 charts_bp = Blueprint('charts', __name__)
 
@@ -25,31 +28,23 @@ def upload_chart():
     if 'image' not in request.files:
         return jsonify({'error': 'No image file provided (field name: image)'}), 400
 
-    file         = request.files['image']
-    ticker       = (request.form.get('ticker') or '').upper().strip()
-    capture_date = (request.form.get('capture_date') or '').strip()
-    timeframe    = request.form.get('timeframe')
-    setup_type   = request.form.get('setup_type')
-    score        = request.form.get('cleanliness_score', type=int)
-    notes        = request.form.get('notes', '')
-    tags_raw     = request.form.get('tags', '[]')
+    file = request.files['image']
 
-    if not ticker or not capture_date:
-        return jsonify({'error': 'ticker and capture_date are required'}), 400
-
+    # Validate multipart form data via Pydantic (inline — no decorator for multipart)
     try:
-        tags = json.loads(tags_raw)
-        if not isinstance(tags, list):
-            raise ValueError
-    except Exception:
-        return jsonify({'error': 'tags must be a JSON array'}), 400
+        form = ChartUploadForm.model_validate(dict(request.form))
+    except ValidationError as exc:
+        errors = [{"field": ".".join(str(l) for l in e["loc"]), "msg": e["msg"]}
+                  for e in exc.errors(include_url=False)]
+        return jsonify({"errors": errors}), 422
 
+    tags    = form.tags
     invalid = validate_tags(tags)
     if invalid:
         return jsonify({'error': f'Invalid tags: {invalid}', 'valid_tags': VALID_TAGS}), 422
 
     try:
-        image_path = save_chart_image(file, ticker, capture_date)
+        image_path = save_chart_image(file, form.ticker, form.capture_date.isoformat())
     except ValueError as e:
         return jsonify({'error': str(e)}), 415
 
@@ -60,8 +55,8 @@ def upload_chart():
                 cleanliness_score, tags, notes)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
-            (ticker, capture_date, timeframe, image_path,
-             setup_type, score, json.dumps(tags), notes),
+            (form.ticker, form.capture_date.isoformat(), form.timeframe, image_path,
+             form.setup_type, form.cleanliness_score, json.dumps(tags), form.notes),
         )
         chart_id = cur.fetchone()['id']
         _sync_chart_tags(conn, chart_id, tags)
@@ -118,27 +113,26 @@ def get_chart(chart_id):
 
 
 @charts_bp.route('/charts/<int:chart_id>', methods=['PUT'])
-def update_chart(chart_id):
-    data    = request.get_json(silent=True) or {}
-    allowed = {'notes', 'tags', 'cleanliness_score', 'setup_type', 'timeframe'}
-    updates = {k: v for k, v in data.items() if k in allowed}
+@validate_body(ChartUpdateBody)
+def update_chart(data: ChartUpdateBody, chart_id):
+    updates = {}
 
-    if 'tags' in updates:
-        tags = updates['tags']
-        if not isinstance(tags, list):
-            return jsonify({'error': 'tags must be a list'}), 400
-        invalid = validate_tags(tags)
-        if invalid:
-            return jsonify({'error': f'Invalid tags: {invalid}', 'valid_tags': VALID_TAGS}), 422
-        updates['tags'] = json.dumps(tags)
-
-    if not updates:
-        return jsonify({'error': 'No valid fields to update'}), 400
+    if data.notes is not None:
+        updates['notes'] = data.notes
+    if data.cleanliness_score is not None:
+        updates['cleanliness_score'] = data.cleanliness_score
+    if data.setup_type is not None:
+        updates['setup_type'] = data.setup_type
+    if data.timeframe is not None:
+        updates['timeframe'] = data.timeframe
 
     tag_list = None
-    if 'tags' in updates:
-        # Already validated above; decode for junction table sync
-        tag_list = json.loads(updates['tags'])
+    if data.tags is not None:
+        invalid = validate_tags(data.tags)
+        if invalid:
+            return jsonify({'error': f'Invalid tags: {invalid}', 'valid_tags': VALID_TAGS}), 422
+        updates['tags'] = json.dumps(data.tags)
+        tag_list = data.tags
 
     set_clause = ', '.join(f'{k} = %s' for k in updates)
     values     = list(updates.values()) + [chart_id]

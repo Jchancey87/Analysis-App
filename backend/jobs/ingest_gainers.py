@@ -24,8 +24,8 @@ from datetime import date as date_cls, datetime, timedelta
 # Allow imports from backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-import requests
 from config import Config
+from services import polygon_client as poly
 
 logging.basicConfig(
     level=logging.INFO,
@@ -124,22 +124,9 @@ def fetch_gainers(target_date: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _get_polygon_snapshot() -> list[dict]:
-    """Fetch top gainers from Polygon Snapshot API (Standard tier includes AH)."""
-    if not Config.POLYGON_API_KEY:
-        log.error("POLYGON_API_KEY not configured")
-        return []
-    try:
-        url = (
-            f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers"
-            f"?include_otc=false&apiKey={Config.POLYGON_API_KEY}"
-        )
-        resp = requests.get(url, timeout=12)
-        resp.raise_for_status()
-        tickers = resp.json().get('tickers', [])
-        return tickers[:POLYGON_SNAPSHOT_LIMIT]
-    except Exception as e:
-        log.warning(f"Polygon snapshot failed: {e}")
-        return []
+    """Fetch top gainers from Polygon Snapshot API via the official SDK."""
+    snaps = poly.get_gainers_snapshot(include_otc=False)
+    return snaps[:POLYGON_SNAPSHOT_LIMIT]
 
 
 # ---------------------------------------------------------------------------
@@ -148,24 +135,10 @@ def _get_polygon_snapshot() -> list[dict]:
 
 def _get_polygon_grouped_daily(date: str) -> dict[str, dict]:
     """
-    Fetch the full grouped daily bars for a given date.
+    Fetch the full grouped daily bars for a given date via the official SDK.
     Returns a dict keyed by ticker symbol for O(1) lookups.
-    Falls back to empty dict on failure (enrichment will skip OHLCV).
     """
-    if not Config.POLYGON_API_KEY:
-        return {}
-    try:
-        url = (
-            f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{date}"
-            f"?adjusted=true&include_otc=false&apiKey={Config.POLYGON_API_KEY}"
-        )
-        resp = requests.get(url, timeout=20)
-        resp.raise_for_status()
-        results = resp.json().get('results', [])
-        return {r['T']: r for r in results if r.get('T')}
-    except Exception as e:
-        log.warning(f"Polygon grouped daily failed for {date}: {e}")
-        return {}
+    return poly.get_grouped_daily(date, adjusted=True, include_otc=False)
 
 
 # ---------------------------------------------------------------------------
@@ -186,19 +159,36 @@ def _enrich_ticker(snap: dict, grouped: dict[str, dict], target_date: str) -> di
     if not ticker or len(ticker) > 5:
         return None
 
-    # ── Price & Gap from Snapshot ──────────────────────────────────────────
-    day        = snap.get('day', {})
-    prevDay    = snap.get('prevDay', {})
-    last_trade = snap.get('lastTrade', {}) or {}
+    # ── Price & Gap ────────────────────────────────────────────────────────
+    # Snapshot fields vary by SDK version; support both dict and attr access.
+    def _gf(obj, *keys):
+        """Get first truthy value from a nested snapshot object/dict."""
+        for k in keys:
+            v = obj.get(k) if isinstance(obj, dict) else getattr(obj, k, None)
+            if v:
+                return v
+        return None
 
-    prev_close = prevDay.get('c') or prevDay.get('vw')
-    last_price = last_trade.get('p') or day.get('c') or day.get('vw')
+    day_obj     = snap.get('day', {}) if isinstance(snap, dict) else getattr(snap, 'day', {})
+    prev_obj    = snap.get('prevDay', {}) if isinstance(snap, dict) else getattr(snap, 'prevDay', {})
+    last_trade_obj = snap.get('lastTrade', {}) if isinstance(snap, dict) else getattr(snap, 'lastTrade', {})
+    day_obj     = day_obj or {}
+    prev_obj    = prev_obj or {}
+    last_trade_obj = last_trade_obj or {}
+
+    prev_close = _gf(prev_obj, 'c', 'vw')
+    last_price = _gf(last_trade_obj, 'p') or _gf(day_obj, 'c', 'vw')
 
     if not prev_close or not last_price or prev_close <= 0:
         return None
 
-    gap_pct = round(((last_price - prev_close) / prev_close) * 100, 2)
-    if gap_pct < MIN_GAP_PCT:
+    # ── Gap = (day open − prev close) / prev close ─────────────────────────
+    # We intentionally wait until we have the grouped-daily bar (step 2) to
+    # calculate this properly.  The snapshot last-trade price is fine for a
+    # quick pre-filter, but the authoritative gap uses the day's opening print.
+    # Pre-filter: skip anything that couldn't possibly clear MIN_GAP_PCT.
+    quick_gap = ((last_price - prev_close) / prev_close) * 100
+    if quick_gap < MIN_GAP_PCT * 0.5:   # generous pre-filter; recalc below
         return None
 
     # ── Price Filter ───────────────────────────────────────────────────────
@@ -206,12 +196,17 @@ def _enrich_ticker(snap: dict, grouped: dict[str, dict], target_date: str) -> di
         return None
 
     # ── OHLCV from Grouped Daily (authoritative EOD bars) ─────────────────
-    bar       = grouped.get(ticker, {})
-    open_px   = bar.get('o') or day.get('o') or prev_close
-    high_px   = bar.get('h') or day.get('h')
-    low_px    = bar.get('l') or day.get('l')
-    vwap      = bar.get('vw') or day.get('vw')
-    volume    = bar.get('v') or day.get('v') or 0
+    bar     = grouped.get(ticker, {})
+    open_px = bar.get('o') or _gf(day_obj, 'o') or prev_close
+    high_px = bar.get('h') or _gf(day_obj, 'h')
+    low_px  = bar.get('l') or _gf(day_obj, 'l')
+    vwap    = bar.get('vw') or _gf(day_obj, 'vw')
+    volume  = bar.get('v') or _gf(day_obj, 'v') or 0
+
+    # ── Authoritative gap using day open vs prev close ─────────────────────
+    gap_pct = round(((open_px - prev_close) / prev_close) * 100, 2)
+    if gap_pct < MIN_GAP_PCT:
+        return None
 
     # ── FMP Profile → float, sector, avg_volume, shares_outstanding ────────
     float_shares, sector, market_cap, shares_out, avg_vol = _get_profile(ticker)
@@ -246,7 +241,7 @@ def _enrich_ticker(snap: dict, grouped: dict[str, dict], target_date: str) -> di
         rs_vs_spy = None
 
     # ── News headline from Polygon ─────────────────────────────────────────
-    headline   = _get_polygon_news_headline(ticker)
+    headline   = poly.get_latest_headline(ticker)
     news_fresh = _classify_news(headline)
 
     return {
@@ -319,27 +314,7 @@ def _yf_float_fallback(ticker: str) -> float | None:
         return None
 
 
-# ---------------------------------------------------------------------------
-# News — Polygon News API (replaces yfinance/Yahoo news)
-# ---------------------------------------------------------------------------
-
-def _get_polygon_news_headline(ticker: str) -> str | None:
-    """Fetch the most recent news headline for a ticker from Polygon."""
-    if not Config.POLYGON_API_KEY:
-        return None
-    try:
-        url = (
-            f"https://api.polygon.io/v2/reference/news"
-            f"?ticker={ticker}&limit=1&apiKey={Config.POLYGON_API_KEY}"
-        )
-        resp = requests.get(url, timeout=8)
-        resp.raise_for_status()
-        results = resp.json().get('results', [])
-        if results:
-            return results[0].get('title')
-    except Exception as e:
-        log.debug(f"[{ticker}] Polygon news failed: {e}")
-    return None
+# (News fetching is now handled by services/polygon_client.py → poly.get_latest_headline)
 
 
 # ---------------------------------------------------------------------------

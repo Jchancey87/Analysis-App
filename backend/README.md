@@ -6,22 +6,25 @@ The backend is a Flask-based REST API that handles data ingestion, AI analysis, 
 
 The backend is organized into several key layers:
 
-### Routes (Blueprints)
+### Routes & Validation
 - `routes/gainers.py` — Top gainers CRUD, filtering, heatmap data, CSV export.
 - `routes/charts.py` — Chart capture uploads, OHLCV data for `lightweight-charts`.
 - `routes/analysis.py` — All LLM job endpoints (deep research, risk, catalyst, context, continuation, sentiment).
+- `validation/` — **Pydantic v2 layer** enforcing strict request schemas and types across all routes.
 
 ### Services
 Business logic is fully decoupled from routes for testability and reuse:
 
 | Service | Purpose |
 |---|---|
+| `polygon_client.py` | **Official Massive.com SDK adapter** (fka Polygon.io) — all market-data REST calls route through here: gainers snapshot, grouped daily bars, minute bars, news, ticker details |
 | `fmp_service.py` | Financial Modeling Prep integration — fundamental metrics, cash runway, earnings, analyst targets, institutional ownership |
 | `sec_service.py` | SEC EDGAR integration — CIK lookup, filing fetches (Submissions API), EFTS full-text search, XBRL shares history |
 | `risk_service.py` | Risk Detection data pipeline — reverse splits, short interest, insider activity, S-3/424B filings, toxic financing search |
-| `catalyst_service.py` | Catalyst Analysis data pipeline — Polygon news, SEC 8-K items, FMP earnings, analyst upgrades, freshness scoring |
+| `catalyst_service.py` | Catalyst Analysis data pipeline — Massive news, SEC 8-K items, FMP earnings, analyst upgrades, freshness scoring |
 | `context_service.py` | Deep Context data pipeline — SMA/EMA levels, FMP RS vs SPY, options flow, journal history |
-| `chart_service_research.py` | Intraday chart generation (Polygon + mplfinance) for the main research report |
+| `chart_service_research.py` | Intraday chart generation (Massive/Polygon OHLCV + mplfinance) for the main research report |
+| `live_screener.py` | Real-time gainer cache — polls Massive snapshot every 5 min, auto-persists at 8 PM ET |
 | `gainer_service.py` | Gainer data queries and filtering |
 | `archetype_service.py` | Pattern categorization stats |
 | `heatmap_service.py` | Float × RVOL heatmap data |
@@ -37,12 +40,18 @@ Business logic is fully decoupled from routes for testability and reuse:
 - `llm/vision_client.py` — Gemini (vision) for chart image annotation.
 
 ### Jobs (Automation)
-- `jobs/ingest_gainers.py` — Pulls top daily gainers from Polygon at market close.
+- `jobs/ingest_gainers.py` — Pulls top daily gainers from Massive.com (fka Polygon.io) via the official Python SDK at market close. Gap % is calculated using the authoritative day-open vs prev-close from grouped daily bars.
 - `jobs/daily_analysis_report.py` — Generates and emails the nightly AI report.
 
 ### Database
 - `database.py` — PostgreSQL connection pool using `psycopg2`.
 - `models/schema.sql` — Idempotent schema for `daily_gainers`, `chart_captures`, `llm_jobs`, and `pipe_filings`.
+
+### Data Validation
+The backend uses **Pydantic v2** for strict schema enforcement.
+- **Decorators**: `@validate_body` and `@validate_query` handle parsing and error reporting.
+- **Error Format**: Returns `422 Unprocessable Entity` with a structured `{"errors": [...]}` JSON body on validation failure.
+- **Normalization**: Fields like `ticker` are automatically stripped and uppercased before reaching the route logic.
 
 ---
 
@@ -66,7 +75,7 @@ Business logic is fully decoupled from routes for testability and reuse:
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | ✅ | PostgreSQL DSN: `postgresql://user:pass@host:5432/db` |
-| `POLYGON_API_KEY` | ✅ | Market data (OHLCV, news, reference) |
+| `POLYGON_API_KEY` | ✅ | Market data key — works with both `api.massive.com` (new) and `api.polygon.io` (legacy) |
 | `FMP_API_KEY` | ✅ | Financial Modeling Prep key |
 | `LLM_API_KEY` | ✅ | Groq API key |
 | `LLM_MODEL` | Optional | Default: `llama-3.3-70b-versatile` |
@@ -145,7 +154,23 @@ The server defaults to `http://127.0.0.1:5000`.
 ## 🧪 Testing
 
 Test scripts in the backend root directory:
-- `test_full_pipeline.py` — Full ingestion → analysis flow.
+- `test_full_pipeline.py` — Full ingestion → analysis flow (scratch debug script).
 - `test_yf_fallback.py` / `test_yf_fallback2.py` — yfinance fallback validation.
 - `test_chart.py` / `test_chart2.py` — Chart generation validation.
-- `test_polygon_date.py` — Polygon date boundary tests.
+- `test_polygon_date.py` — Massive/Polygon date boundary tests.
+
+---
+
+## 🔑 Market Data SDK
+
+All market data calls use the **official Massive Python client** (`massive` PyPI package).
+Massive.com is the rebrand of Polygon.io as of October 30, 2025.
+
+```bash
+pip install -U massive   # replaces polygon-api-client
+```
+
+- SDK entry points: `from massive import RESTClient, WebSocketClient`
+- All calls are centralised in `services/polygon_client.py` — no raw HTTP calls to Polygon/Massive endpoints anywhere else.
+- Gap % for ingested gainers uses the **day-open vs prev-close** from grouped daily bars (not the live last-trade price), ensuring accurate historical gap calculation.
+- Reference: [massive-com/client-python](https://github.com/massive-com/client-python)

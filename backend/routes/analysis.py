@@ -4,6 +4,16 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 from database import get_connection
 from services.chart_service import save_chart_image
+from validation.decorators import validate_body, validate_query
+from validation.schemas import (
+    ContinuationJobBody,
+    SentimentJobBody,
+    TickerDateBody,
+    TickerOnlyBody,
+    ChartDataQuery,
+    ResearchHistoryQuery,
+    ListJobsQuery,
+)
 
 analysis_bp = Blueprint('analysis', __name__)
 
@@ -66,12 +76,9 @@ def gemini_import(chart_id):
 # ---------------------------------------------------------------------------
 
 @analysis_bp.route('/continuation', methods=['POST'])
-def start_continuation():
-    data = request.get_json(silent=True) or {}
-    date = (data.get('date') or '').strip()
-    if not date:
-        return jsonify({'error': 'date is required (YYYY-MM-DD)'}), 400
-
+@validate_body(ContinuationJobBody)
+def start_continuation(data: ContinuationJobBody):
+    date = data.date.isoformat()
     job_id = str(uuid.uuid4())
     _create_job(job_id, 'continuation', date)
     threading.Thread(target=_run_continuation, args=(job_id, date), daemon=True).start()
@@ -79,29 +86,21 @@ def start_continuation():
 
 
 @analysis_bp.route('/sentiment', methods=['POST'])
-def start_sentiment():
-    data  = request.get_json(silent=True) or {}
-    query = (data.get('query') or '').strip()
-    if not query:
-        return jsonify({'error': 'query is required'}), 400
-
+@validate_body(SentimentJobBody)
+def start_sentiment(data: SentimentJobBody):
     job_id = str(uuid.uuid4())
-    _create_job(job_id, 'sentiment', query[:200])
-    threading.Thread(target=_run_sentiment, args=(job_id, query), daemon=True).start()
+    _create_job(job_id, 'sentiment', data.query[:200])
+    threading.Thread(target=_run_sentiment, args=(job_id, data.query), daemon=True).start()
     return jsonify({'job_id': job_id, 'status': 'pending'})
 
 
 @analysis_bp.route('/research', methods=['POST'])
-def start_research():
-    data   = request.get_json(silent=True) or {}
-    ticker = (data.get('ticker') or '').strip().upper()
-    date   = (data.get('date') or '').strip()
-    force  = data.get('force', False)
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-
-    if not force:
-        cached = _cache_read(ticker, date or None, 'deep_research')
+@validate_body(TickerDateBody)
+def start_research(data: TickerDateBody):
+    ticker = data.ticker
+    date   = data.date.isoformat() if data.date else ''
+    if not data.force:
+        cached = _cache_read(ticker, data.date or None, 'deep_research')
         if cached:
             return jsonify({'cached': True, 'report': cached['output'],
                             'version': cached['version'], 'created_at': str(cached['created_at'])})
@@ -114,14 +113,10 @@ def start_research():
 
 
 @analysis_bp.route('/research/risk', methods=['POST'])
-def start_risk_detection():
-    data   = request.get_json(silent=True) or {}
-    ticker = (data.get('ticker') or '').strip().upper()
-    force  = data.get('force', False)
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-
-    if not force:
+@validate_body(TickerOnlyBody)
+def start_risk_detection(data: TickerOnlyBody):
+    ticker = data.ticker
+    if not data.force:
         cached = _cache_read(ticker, None, 'risk')
         if cached:
             return jsonify({'cached': True, 'report': cached['output'],
@@ -134,16 +129,12 @@ def start_risk_detection():
 
 
 @analysis_bp.route('/research/catalyst', methods=['POST'])
-def start_catalyst_analysis():
-    data   = request.get_json(silent=True) or {}
-    ticker = (data.get('ticker') or '').strip().upper()
-    date   = (data.get('date') or '').strip()
-    force  = data.get('force', False)
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-
-    if not force:
-        cached = _cache_read(ticker, date or None, 'catalyst')
+@validate_body(TickerDateBody)
+def start_catalyst_analysis(data: TickerDateBody):
+    ticker = data.ticker
+    date   = data.date.isoformat() if data.date else ''
+    if not data.force:
+        cached = _cache_read(ticker, data.date or None, 'catalyst')
         if cached:
             return jsonify({'cached': True, 'report': cached['output'],
                             'version': cached['version'], 'created_at': str(cached['created_at'])})
@@ -155,14 +146,10 @@ def start_catalyst_analysis():
 
 
 @analysis_bp.route('/research/context', methods=['POST'])
-def start_deep_context():
-    data   = request.get_json(silent=True) or {}
-    ticker = (data.get('ticker') or '').strip().upper()
-    force  = data.get('force', False)
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-
-    if not force:
+@validate_body(TickerOnlyBody)
+def start_deep_context(data: TickerOnlyBody):
+    ticker = data.ticker
+    if not data.force:
         cached = _cache_read(ticker, None, 'context')
         if cached:
             return jsonify({'cached': True, 'report': cached['output'],
@@ -175,13 +162,10 @@ def start_deep_context():
 
 
 @analysis_bp.route('/research/pipe', methods=['POST'])
-def start_pipe_analysis():
-    data   = request.get_json(silent=True) or {}
-    ticker = (data.get('ticker') or '').strip().upper()
-    date   = (data.get('date') or '').strip()
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-
+@validate_body(TickerDateBody)
+def start_pipe_analysis(data: TickerDateBody):
+    ticker = data.ticker
+    date   = data.date.isoformat() if data.date else ''
     job_id = str(uuid.uuid4())
     _create_job(job_id, 'pipe_analysis', ticker)
     threading.Thread(target=_run_pipe_analysis, args=(job_id, ticker, date), daemon=True).start()
@@ -237,15 +221,14 @@ def retry_job(job_id):
 
 
 @analysis_bp.route('/research/chart-data', methods=['GET'])
-def get_chart_data():
+@validate_query(ChartDataQuery)
+def get_chart_data(params: ChartDataQuery):
     """Return OHLCV + all indicator series as JSON for the interactive Lightweight Charts frontend."""
     import pandas as pd
     import numpy as np
 
-    ticker = (request.args.get('ticker') or '').strip().upper()
-    date   = (request.args.get('date')   or '').strip()
-    if not ticker or not date:
-        return jsonify({'error': 'ticker and date are required'}), 400
+    ticker = params.ticker
+    date   = params.date.isoformat()
 
     # 1. Fetch intraday bars (Polygon primary, yfinance fallback)
     bars_df = _fetch_intraday_polygon(ticker, date)
@@ -373,26 +356,21 @@ def get_chart_data():
 
 
 @analysis_bp.route('/research/history', methods=['GET'])
-def research_history():
+@validate_query(ResearchHistoryQuery)
+def research_history(qs: ResearchHistoryQuery):
     """
     Return all cached research reports for a ticker, newest first.
     Optional ?type=risk filter.
     ?ticker=AAPL&type=risk&limit=20
     """
-    ticker = (request.args.get('ticker') or '').strip().upper()
-    rtype  = request.args.get('type')
-    limit  = request.args.get('limit', 50, type=int)
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-
-    query  = "SELECT id, ticker, date, report_type, version, model_used, created_at, expires_at FROM research_cache WHERE ticker = %s"
-    params = [ticker]
-    if rtype:
-        query += " AND report_type = %s"; params.append(rtype)
-    query += " ORDER BY created_at DESC LIMIT %s"; params.append(limit)
+    sql    = "SELECT id, ticker, date, report_type, version, model_used, created_at, expires_at FROM research_cache WHERE ticker = %s"
+    params = [qs.ticker]
+    if qs.type:
+        sql += " AND report_type = %s"; params.append(qs.type)
+    sql += " ORDER BY created_at DESC LIMIT %s"; params.append(qs.limit)
 
     with get_connection() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -437,17 +415,16 @@ def export_cached_report(cache_id):
 
 
 @analysis_bp.route('/jobs', methods=['GET'])
-def list_jobs():
+@validate_query(ListJobsQuery)
+def list_jobs(qs: ListJobsQuery):
     """List past LLM jobs, newest first. Optional ?type=continuation filter."""
-    jtype  = request.args.get('type')
-    limit  = request.args.get('limit', 50, type=int)
-    query  = "SELECT * FROM llm_jobs WHERE 1=1"
+    sql    = "SELECT * FROM llm_jobs WHERE 1=1"
     params = []
-    if jtype:
-        query += " AND type = %s"; params.append(jtype)
-    query += " ORDER BY created_at DESC LIMIT %s"; params.append(limit)
+    if qs.type:
+        sql += " AND type = %s"; params.append(qs.type)
+    sql += " ORDER BY created_at DESC LIMIT %s"; params.append(qs.limit)
     with get_connection() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -528,41 +505,23 @@ def _run_sentiment(job_id: str, query: str):
 
 
 def _fetch_intraday_polygon(ticker: str, date: str):
-    import requests
     import pandas as pd
-    from config import Config
-    
-    api_key = Config.POLYGON_API_KEY
-    if not api_key:
-        print("Warning: POLYGON_API_KEY not set. Skipping intraday fetch.")
-        return pd.DataFrame()
-        
-    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/{date}/{date}"
-    params = {
-        'adjusted': 'true',
-        'sort': 'asc',
-        'limit': 50000,
-        'apiKey': api_key
-    }
-    
+    from services import polygon_client as poly
+
     try:
-        resp = requests.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        if 'results' not in data or not data['results']:
+        bars = poly.get_minute_bars(ticker, date, date, limit=50_000)
+        if not bars:
             return pd.DataFrame()
-            
-        df = pd.DataFrame(data['results'])
-        # Rename columns to match standard ohlcv
-        df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close', 'v': 'volume', 'vw': 'vwap', 't': 'timestamp'})
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
-        # Assuming US/Eastern for display purposes
+
+        df = pd.DataFrame(bars)
+        df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low',
+                                 'c': 'close', 'v': 'volume', 'vw': 'vwap'})
+        df['timestamp'] = pd.to_datetime(df['t'], unit='ms', utc=True)
         df['timestamp'] = df['timestamp'].dt.tz_convert('America/New_York')
         df = df.set_index('timestamp')
         return df
     except Exception as e:
-        print(f"Error fetching polygon data: {e}")
+        print(f"[analysis] Massive/Polygon intraday fetch failed for {ticker} {date}: {e}")
         return pd.DataFrame()
 
 def _run_deep_research(job_id: str, ticker: str, date: str, base_url: str):

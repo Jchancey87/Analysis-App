@@ -13,7 +13,7 @@ This platform automates the process of identifying, analyzing, and journaling ma
 - **AI/LLM**:
   - **Text**: Groq (Llama 3) for rapid structured analysis reports.
   - **Vision**: Gemini 1.5 Pro/Flash for automated chart annotation and pattern recognition.
-- **Data Pipeline**: Financial Modeling Prep (FMP - Primary Fundamental/Earnings), Polygon.io (Primary Market Data), SEC EDGAR (Filings & PIPE detection), finviz
+- **Data Pipeline**: Financial Modeling Prep (FMP - Primary Fundamental/Earnings), Massive.com / Polygon.io (Primary Market Data — official `massive` Python SDK), SEC EDGAR (Filings & PIPE detection), finviz
 - **Deployment**: Manual (Ubuntu/Proxmox LXC), PM2 (Process Management), Nginx Proxy Manager
 
 ## ✨ Core Features
@@ -76,7 +76,7 @@ nano backend/.env
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | PostgreSQL DSN: `postgresql://user:pass@host:5432/trading_journal` |
-| `POLYGON_API_KEY` | Market data (news, OHLCV, aggregates) |
+| `POLYGON_API_KEY` | Market data key — works with Massive.com (new) and api.polygon.io (legacy) |
 | `FMP_API_KEY` | Financial Modeling Prep key for fundamental/earnings data |
 | `LLM_API_KEY` | Groq API key for text analysis |
 | `GEMINI_API_KEY` | Gemini vision API key for chart annotation |

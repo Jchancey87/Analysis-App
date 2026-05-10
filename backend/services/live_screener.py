@@ -24,7 +24,6 @@ import logging
 from datetime import datetime, date as date_cls
 from typing import Optional
 
-import requests
 import pytz
 
 log = logging.getLogger(__name__)
@@ -88,28 +87,17 @@ def get_session_label(session: str) -> str:
 
 def _fetch_polygon_snapshot() -> list[dict]:
     """
-    Fetch top gainers from Polygon v2 Snapshot endpoint.
+    Fetch top gainers from Massive.com (fka Polygon.io) via the official SDK.
     With Standard tier, this includes extended-hours data.
-    Returns a list of raw ticker dicts from Polygon.
+    Returns a list of raw ticker dicts.
     """
-    from config import Config
-    if not Config.POLYGON_API_KEY:
-        log.warning("[LiveScreener] No POLYGON_API_KEY configured")
-        return []
-
-    url = (
-        f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers"
-        f"?include_otc=false&apiKey={Config.POLYGON_API_KEY}"
-    )
+    from services import polygon_client as poly
     try:
-        resp = requests.get(url, timeout=12)
-        resp.raise_for_status()
-        data = resp.json()
-        tickers = data.get('tickers', [])
-        log.info(f"[LiveScreener] Polygon returned {len(tickers)} raw gainers")
-        return tickers[:POLYGON_LIMIT]
+        snaps = poly.get_gainers_snapshot(include_otc=False)
+        log.info(f"[LiveScreener] Massive returned {len(snaps)} raw gainers")
+        return snaps[:POLYGON_LIMIT]
     except Exception as e:
-        log.warning(f"[LiveScreener] Polygon snapshot failed: {e}")
+        log.warning(f"[LiveScreener] Massive snapshot failed: {e}")
         return []
 
 

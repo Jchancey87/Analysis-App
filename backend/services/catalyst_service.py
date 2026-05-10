@@ -2,7 +2,7 @@
 catalyst_service.py — Data gatherer for the Catalyst Analysis feature.
 
 Aggregates signals from:
-  - Polygon.io: recent news headlines anchored to event date
+  - Massive.com (fka Polygon.io): recent news headlines anchored to event date
   - yfinance: news headlines (free fallback / supplementary)
   - SEC EDGAR: 8-K filings with item code parsing (FDA, earnings, contracts)
   - SEC EDGAR: full-text search for catalyst keywords near event date
@@ -90,45 +90,54 @@ def build_catalyst_payload(ticker: str, date: str | None = None) -> dict:
 
 def _get_polygon_news(ticker: str, anchor_date: str, n: int = 15) -> list[dict]:
     """
-    Fetch news from Polygon.io anchored ±14 days around anchor_date.
+    Fetch news from Massive.com (fka Polygon.io) anchored ±14 days around anchor_date.
     Returns list with 'title', 'published', 'publisher', 'description'.
+    Uses the official Massive SDK via polygon_client adapter.
     """
-    if not Config.POLYGON_API_KEY:
-        log.warning('[Catalyst] POLYGON_API_KEY not set, skipping Polygon news.')
-        return []
+    from services import polygon_client as poly
 
     try:
         dt        = datetime.strptime(anchor_date, '%Y-%m-%d')
         from_date = (dt - timedelta(days=14)).strftime('%Y-%m-%d')
         to_date   = (dt + timedelta(days=1)).strftime('%Y-%m-%d')
 
-        resp = requests.get(
-            'https://api.polygon.io/v2/reference/news',
-            params={
-                'ticker':              ticker,
-                'published_utc.gte':   from_date,
-                'published_utc.lte':   to_date,
-                'order':               'desc',
-                'limit':               n,
-                'apiKey':              Config.POLYGON_API_KEY,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
+        from massive import RESTClient
+        from config import Config
+        if not Config.POLYGON_API_KEY:
+            log.warning('[Catalyst] POLYGON_API_KEY not set, skipping news.')
+            return []
 
-        return [
-            {
-                'source':      'polygon',
-                'title':       a.get('title', ''),
-                'published':   a.get('published_utc', '')[:10],
-                'publisher':   a.get('publisher', {}).get('name', ''),
-                'description': (a.get('description') or '')[:400],
-                'days_from_event': _days_from_event(a.get('published_utc', '')[:10], anchor_date),
-            }
-            for a in resp.json().get('results', [])
-        ]
+        client = RESTClient(api_key=Config.POLYGON_API_KEY, pagination=False)
+        articles = list(client.list_ticker_news(
+            ticker,
+            published_utc_gte=from_date,
+            published_utc_lte=to_date,
+            order='desc',
+            limit=n,
+        ))
+
+        results = []
+        for a in articles:
+            title       = getattr(a, 'title', '') or (a.get('title', '') if isinstance(a, dict) else '')
+            pub_utc     = getattr(a, 'published_utc', '') or (a.get('published_utc', '') if isinstance(a, dict) else '')
+            publisher   = ''
+            pub_obj     = getattr(a, 'publisher', None) or (a.get('publisher', {}) if isinstance(a, dict) else {})
+            if isinstance(pub_obj, dict):
+                publisher = pub_obj.get('name', '')
+            elif hasattr(pub_obj, 'name'):
+                publisher = pub_obj.name or ''
+            description = getattr(a, 'description', '') or (a.get('description', '') if isinstance(a, dict) else '')
+            results.append({
+                'source':          'massive',
+                'title':           title,
+                'published':       (pub_utc or '')[:10],
+                'publisher':       publisher,
+                'description':     (description or '')[:400],
+                'days_from_event': _days_from_event((pub_utc or '')[:10], anchor_date),
+            })
+        return results
     except Exception as e:
-        log.warning(f'[Catalyst] Polygon news fetch failed: {e}')
+        log.warning(f'[Catalyst] Massive news fetch failed: {e}')
         return []
 
 

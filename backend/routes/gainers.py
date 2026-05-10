@@ -4,6 +4,8 @@ from flask import Blueprint, jsonify, request, Response
 from services.gainer_service import get_gainers_filtered, get_sectors
 from services.heatmap_service import build_heatmap_spec
 from services.archetype_service import get_archetype_stats
+from validation.decorators import validate_query
+from validation.schemas import GainerFilterQuery, TickerHistoryQuery, PipeScanQuery
 
 gainers_bp = Blueprint('gainers', __name__)
 
@@ -27,60 +29,56 @@ def live_gainers():
 
 
 @gainers_bp.route('/gainers', methods=['GET'])
-def list_gainers():
+@validate_query(GainerFilterQuery)
+def list_gainers(qs: GainerFilterQuery):
     gainers = get_gainers_filtered(
-        date        = request.args.get('date'),
-        min_gap     = request.args.get('min_gap',   type=float),
-        max_float_m = request.args.get('max_float', type=float),
-        min_rvol    = request.args.get('min_rvol',  type=float),
-        sector      = request.args.get('sector'),
+        date        = qs.date.isoformat() if qs.date else None,
+        min_gap     = qs.min_gap,
+        max_float_m = qs.max_float,
+        min_rvol    = qs.min_rvol,
+        sector      = qs.sector,
     )
     return jsonify(gainers)
 
 
 @gainers_bp.route('/gainers/heatmap', methods=['GET'])
-def heatmap():
+@validate_query(GainerFilterQuery)
+def heatmap(qs: GainerFilterQuery):
     from datetime import datetime, timedelta
     from services.heatmap_service import get_sector_spec
 
-    period      = (request.args.get('period') or 'all').lower()
-    view        = (request.args.get('view')   or 'float_rvol').lower()
-    exact_date  = request.args.get('date')
-    min_gap     = request.args.get('min_gap',   type=float)
-    max_float_m = request.args.get('max_float', type=float)
-    min_rvol    = request.args.get('min_rvol',  type=float)
-    sector      = request.args.get('sector')
-
     cutoff = None
+    exact_date = qs.date.isoformat() if qs.date else None
     if not exact_date:
         today  = datetime.utcnow().date()
-        if period == 'week':
+        if qs.period == 'week':
             cutoff = (today - timedelta(days=7)).isoformat()
-        elif period == 'month':
+        elif qs.period == 'month':
             cutoff = (today - timedelta(days=30)).isoformat()
-        elif period == 'year':
+        elif qs.period == 'year':
             cutoff = (today - timedelta(days=365)).isoformat()
 
-    if view == 'sector':
+    if qs.view == 'sector':
         return jsonify(get_sector_spec(
-            cutoff_date=cutoff, exact_date=exact_date, min_gap=min_gap,
-            max_float_m=max_float_m, min_rvol=min_rvol, sector=sector
+            cutoff_date=cutoff, exact_date=exact_date, min_gap=qs.min_gap,
+            max_float_m=qs.max_float, min_rvol=qs.min_rvol, sector=qs.sector
         ))
     return jsonify(build_heatmap_spec(
-        cutoff_date=cutoff, exact_date=exact_date, min_gap=min_gap,
-        max_float_m=max_float_m, min_rvol=min_rvol, sector=sector
+        cutoff_date=cutoff, exact_date=exact_date, min_gap=qs.min_gap,
+        max_float_m=qs.max_float, min_rvol=qs.min_rvol, sector=qs.sector
     ))
 
 
 @gainers_bp.route('/gainers/export', methods=['GET'])
-def export_gainers():
+@validate_query(GainerFilterQuery)
+def export_gainers(qs: GainerFilterQuery):
     """CSV export — honours the same filter params as /gainers."""
     gainers = get_gainers_filtered(
-        date        = request.args.get('date'),
-        min_gap     = request.args.get('min_gap',   type=float),
-        max_float_m = request.args.get('max_float', type=float),
-        min_rvol    = request.args.get('min_rvol',  type=float),
-        sector      = request.args.get('sector'),
+        date        = qs.date.isoformat() if qs.date else None,
+        min_gap     = qs.min_gap,
+        max_float_m = qs.max_float,
+        min_rvol    = qs.min_rvol,
+        sector      = qs.sector,
     )
 
     if not gainers:
@@ -140,28 +138,23 @@ def archetypes():
 
 
 @gainers_bp.route('/gainers/pipe-scan', methods=['GET'])
-def pipe_scan():
+@validate_query(PipeScanQuery)
+def pipe_scan(qs: PipeScanQuery):
     """
     Batch-scan all gainers for a given date for PIPE/private placement activity.
     Results are cached in pipe_filings table; only hits EDGAR for new scans.
-
-    Query params:
-      date — YYYY-MM-DD (required)
     """
-    date = (request.args.get('date') or '').strip()
-    if not date:
-        return jsonify({'error': 'date is required'}), 400
-
     try:
         from services.pipe_service import batch_scan_gainers
-        results = batch_scan_gainers(date)
+        results = batch_scan_gainers(qs.date.isoformat())
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @gainers_bp.route('/gainers/ticker-history', methods=['GET'])
-def ticker_history():
+@validate_query(TickerHistoryQuery)
+def ticker_history(qs: TickerHistoryQuery):
     """
     Aggregated per-ticker appearance history.
 
@@ -174,27 +167,16 @@ def ticker_history():
     from database import get_connection
     from datetime import datetime, timedelta
 
-    period      = (request.args.get('period') or 'all').lower()
-    search      = (request.args.get('search') or '').upper().strip()
-    sort        = (request.args.get('sort')   or 'last_seen').lower()
-    limit       = request.args.get('limit', 500, type=int)
-    exact_date  = request.args.get('date')
-    min_gap     = request.args.get('min_gap',   type=float)
-    max_float_m = request.args.get('max_float', type=float)
-    min_rvol    = request.args.get('min_rvol',  type=float)
-    sector      = request.args.get('sector')
-    min_price   = request.args.get('min_price', type=float)
-    max_price   = request.args.get('max_price', type=float)
+    cutoff     = None
+    exact_date = qs.date.isoformat() if qs.date else None
 
-    # Period cutoff - Ignored if searching for a specific ticker
-    cutoff = None
-    if not exact_date and not search:
-        today  = datetime.utcnow().date()
-        if period == 'week':
+    if not exact_date:
+        today = datetime.utcnow().date()
+        if qs.period == 'week':
             cutoff = (today - timedelta(days=7)).isoformat()
-        elif period == 'month':
+        elif qs.period == 'month':
             cutoff = (today - timedelta(days=30)).isoformat()
-        elif period == 'year':
+        elif qs.period == 'year':
             cutoff = (today - timedelta(days=365)).isoformat()
 
     # Build query
@@ -206,28 +188,28 @@ def ticker_history():
     elif cutoff:
         conditions.append('date >= %s')
         params.append(cutoff)
-    
-    if search:
+
+    if qs.search:
         conditions.append('ticker LIKE %s')
-        params.append(f'{search}%')
-    if min_gap:
+        params.append(f'{qs.search}%')
+    if qs.min_gap:
         conditions.append('gap_pct >= %s')
-        params.append(min_gap)
-    if max_float_m:
+        params.append(qs.min_gap)
+    if qs.max_float:
         conditions.append('float_shares <= %s')
-        params.append(max_float_m * 1_000_000)
-    if min_rvol:
+        params.append(qs.max_float * 1_000_000)
+    if qs.min_rvol:
         conditions.append('rvol_15m >= %s')
-        params.append(min_rvol)
-    if sector:
+        params.append(qs.min_rvol)
+    if qs.sector:
         conditions.append('sector = %s')
-        params.append(sector)
-    if min_price:
+        params.append(qs.sector)
+    if qs.min_price:
         conditions.append('close_price >= %s')
-        params.append(min_price)
-    if max_price:
+        params.append(qs.min_price)
+    if qs.max_price:
         conditions.append('close_price <= %s')
-        params.append(max_price)
+        params.append(qs.max_price)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
@@ -237,9 +219,9 @@ def ticker_history():
         'last_seen':   'last_seen DESC',
         'first_seen':  'first_seen ASC',
     }
-    order_clause = order_map.get(sort, 'last_seen DESC')
+    order_clause = order_map.get(qs.sort, 'last_seen DESC')
 
-    params.append(limit)
+    params.append(qs.limit)
 
     with get_connection() as conn:
         rows = conn.execute(f"""

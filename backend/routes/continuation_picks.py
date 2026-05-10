@@ -10,6 +10,8 @@ import json
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, jsonify, request
 from database import get_connection
+from validation.decorators import validate_body
+from validation.schemas import PickAddBody
 
 cont_picks_bp = Blueprint('continuation_picks', __name__)
 
@@ -49,27 +51,18 @@ def list_picks():
 # ---------------------------------------------------------------------------
 
 @cont_picks_bp.route('/continuation-picks', methods=['POST'])
-def add_picks():
+@validate_body(PickAddBody)
+def add_picks(data: PickAddBody):
     """
     Accepts either a single pick or a list of picks.
     Each pick: { ticker, date, reason?, gap_pct?, float_shares?, rvol_15m?, sector?, rank? }
     Uses INSERT ... ON CONFLICT DO NOTHING so re-running the nightly job is idempotent.
     """
-    data = request.get_json(silent=True) or {}
-    picks = data if isinstance(data, list) else [data]
-
-    if not picks:
-        return jsonify({'error': 'No picks provided'}), 400
-
-    now = datetime.now(timezone.utc).isoformat()
+    now      = datetime.now(timezone.utc).isoformat()
     inserted = 0
 
     with get_connection() as conn:
-        for p in picks:
-            ticker = (p.get('ticker') or '').upper().strip()
-            date   = (p.get('date') or '').strip()
-            if not ticker or not date:
-                continue
+        for p in data.picks:
             conn.execute(
                 """
                 INSERT INTO continuation_picks
@@ -78,14 +71,14 @@ def add_picks():
                 ON CONFLICT (ticker, date) DO NOTHING
                 """,
                 (
-                    ticker,
-                    date,
-                    p.get('reason'),
-                    p.get('gap_pct'),
-                    p.get('float_shares'),
-                    p.get('rvol_15m'),
-                    p.get('sector'),
-                    p.get('rank', 1),
+                    p.ticker,
+                    p.date.isoformat(),
+                    p.reason,
+                    p.gap_pct,
+                    p.float_shares,
+                    p.rvol_15m,
+                    p.sector,
+                    p.rank,
                     now,
                 )
             )

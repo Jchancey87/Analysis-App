@@ -9,7 +9,7 @@ The Trading Pattern Journal is a self-hosted, distributed local application cons
 | Source | Used For | Auth |
 |---|---|---|
 | **FMP (Financial Modeling Prep)** | Fundamentals, earnings calendar, analyst estimates, enterprise value | API Key |
-| **Polygon.io** | Real-time OHLCV, daily aggregates, news articles | API Key |
+| **Massive.com** (fka Polygon.io) | Real-time OHLCV, daily aggregates, gainers snapshot, news articles — via official `massive` Python SDK (`services/polygon_client.py`) | API Key |
 | **SEC EDGAR Submissions API** | Company filings (S-3, 8-K, 424B) | User-Agent header only |
 | **SEC EDGAR EFTS** | Full-text search for toxic financing keywords | User-Agent header only |
 | **SEC EDGAR XBRL** | Quarterly shares outstanding (dilution trend) | User-Agent header only |
@@ -20,7 +20,7 @@ The Trading Pattern Journal is a self-hosted, distributed local application cons
 
 - **Modular Blueprints**: The API is segmented into `gainers`, `market`, `watchlist`, `charts`, and `analysis` blueprints, each registered at `/api`.
 - **Market Intelligence Blueprint**: A specialized high-performance route providing live index status (SPY/QQQ/IWM) and high-impact economic events (FMP Economic Calendar) with aggressive caching (15min/6h) to preserve API quotas.
-- **Service-Oriented Design**: All data gathering lives in `services/`, completely decoupled from routes. This means each service can be tested and called independently.
+- **Service-Oriented Design**: All data gathering lives in `services/`, completely decoupled from routes. Market data calls are centralised through `services/polygon_client.py` (official Massive SDK adapter) — no raw HTTP calls to Massive/Polygon endpoints outside this module.
 - **Async Job Pattern**: All LLM-heavy operations (`/api/research/*`) immediately return a `job_id` and run in daemon threads. The frontend polls `GET /api/jobs/<job_id>` until completion. Jobs are persisted to PostgreSQL (`llm_jobs` table).
 
 ### 3. AI Analysis Engine
@@ -52,7 +52,9 @@ The AI layer has two clients and six prompt functions:
 ### Daily Automation
 ```
 Market Close (4pm ET)
-  → ingest_gainers.py: Polygon top gainers (ET-aware) → PostgreSQL daily_gainers table
+  → ingest_gainers.py: Massive.com top gainers snapshot (ET-aware)
+      gap% = (day_open - prev_close) / prev_close   ← authoritative grouped daily bar
+      → PostgreSQL daily_gainers table
   → daily_analysis_report.py: Top 3 gainers → Groq analysis → email
 
 Morning Briefing (4am – 9:30am ET)
@@ -67,7 +69,7 @@ Morning Briefing (4am – 9:30am ET)
 User enters ticker → clicks ANALYZE
   │
   ├── [Thread 1] /api/research
-  │     FMP fundamentals + Polygon intraday → mplfinance chart
+  │     FMP fundamentals + Massive.com intraday → mplfinance chart
   │     → Gemini vision analysis → Groq DEEP_RESEARCH_SYSTEM → Full Report
   │
   ├── [Thread 2] /api/research/risk
@@ -75,11 +77,11 @@ User enters ticker → clicks ANALYZE
   │     → Groq RISK_DETECTION_SYSTEM → Risk Report
   │
   ├── [Thread 3] /api/research/catalyst
-  │     Polygon news + SEC 8-K filings + FMP earnings calendar + freshness LLM scoring
+  │     Massive.com news + SEC 8-K filings + FMP earnings calendar + freshness scoring
   │     → Groq CATALYST_ANALYSIS_SYSTEM → Catalyst Report (Tier 1/2/3)
   │
   └── [Thread 4] /api/research/context
-        Polygon daily OHLCV (SMA) + FMP RS vs SPY + options data
+        Massive.com daily OHLCV (SMA) + FMP RS vs SPY + options data
         + PostgreSQL daily_gainers history for this ticker
         → Groq DEEP_CONTEXT_SYSTEM → Setup Score + Playbook
 ```

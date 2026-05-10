@@ -2,10 +2,14 @@ import json
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 from database import get_connection
+from validation.decorators import validate_body, validate_query
+from validation.schemas import (
+    ObservationCreateBody,
+    ObservationUpdateBody,
+    ObservationFilterQuery,
+)
 
 observations_bp = Blueprint('observations', __name__)
-
-VALID_SENTIMENTS = ('bullish', 'bearish', 'neutral')
 
 
 # ---------------------------------------------------------------------------
@@ -13,31 +17,24 @@ VALID_SENTIMENTS = ('bullish', 'bearish', 'neutral')
 # ---------------------------------------------------------------------------
 
 @observations_bp.route('/observations', methods=['GET'])
-def list_observations():
-    ticker    = (request.args.get('ticker')    or '').upper().strip()
-    sentiment = request.args.get('sentiment')
-    tag       = request.args.get('tag')
-    date_from = request.args.get('date_from')
-    date_to   = request.args.get('date_to')
-    limit     = request.args.get('limit', 100, type=int)
-
+@validate_query(ObservationFilterQuery)
+def list_observations(qs: ObservationFilterQuery):
     query  = "SELECT * FROM observations WHERE 1=1"
     params = []
 
-    if ticker:
-        query += " AND ticker = %s";    params.append(ticker)
-    if sentiment:
-        query += " AND sentiment = %s"; params.append(sentiment)
-    if tag:
-        # PostgreSQL LIKE is case-sensitive by default — use ILIKE or keep LIKE
-        query += " AND tags ILIKE %s";  params.append(f'%{tag}%')
-    if date_from:
-        query += " AND date >= %s";     params.append(date_from)
-    if date_to:
-        query += " AND date <= %s";     params.append(date_to)
+    if qs.ticker:
+        query += " AND ticker = %s";    params.append(qs.ticker)
+    if qs.sentiment:
+        query += " AND sentiment = %s"; params.append(qs.sentiment)
+    if qs.tag:
+        query += " AND tags ILIKE %s";  params.append(f'%{qs.tag}%')
+    if qs.date_from:
+        query += " AND date >= %s";     params.append(qs.date_from.isoformat())
+    if qs.date_to:
+        query += " AND date <= %s";     params.append(qs.date_to.isoformat())
 
     query += " ORDER BY date DESC, created_at DESC LIMIT %s"
-    params.append(limit)
+    params.append(qs.limit)
 
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
@@ -61,29 +58,9 @@ def get_observations_for_ticker(ticker):
 # ---------------------------------------------------------------------------
 
 @observations_bp.route('/observations', methods=['POST'])
-def create_observation():
-    data = request.get_json(silent=True) or {}
-
-    ticker    = (data.get('ticker') or '').upper().strip()
-    date      = (data.get('date')   or '').strip()
-    body      = (data.get('body')   or '').strip()
-    title     = (data.get('title')  or '').strip() or None
-    sentiment = (data.get('sentiment') or 'neutral').strip().lower()
-    tags_raw  = data.get('tags', [])
-    linked_chart_id = data.get('linked_chart_id')
-
-    if not ticker:
-        return jsonify({'error': 'ticker is required'}), 400
-    if not date:
-        return jsonify({'error': 'date is required (YYYY-MM-DD)'}), 400
-    if not body:
-        return jsonify({'error': 'body is required'}), 400
-    if sentiment not in VALID_SENTIMENTS:
-        return jsonify({'error': f'sentiment must be one of {VALID_SENTIMENTS}'}), 400
-
-    if not isinstance(tags_raw, list):
-        return jsonify({'error': 'tags must be a JSON array'}), 400
-    tags = json.dumps([str(t).strip() for t in tags_raw if str(t).strip()])
+@validate_body(ObservationCreateBody)
+def create_observation(data: ObservationCreateBody):
+    tags = json.dumps(data.tags)
 
     now = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
@@ -92,7 +69,8 @@ def create_observation():
                (ticker, date, title, body, sentiment, tags, linked_chart_id, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
-            (ticker, date, title, body, sentiment, tags, linked_chart_id, now, now),
+            (data.ticker, data.date.isoformat(), data.title, data.body,
+             data.sentiment, tags, data.linked_chart_id, now, now),
         )
         obs_id = cur.fetchone()['id']
 
@@ -104,26 +82,23 @@ def create_observation():
 # ---------------------------------------------------------------------------
 
 @observations_bp.route('/observations/<int:obs_id>', methods=['PUT'])
-def update_observation(obs_id):
-    data = request.get_json(silent=True) or {}
-
+@validate_body(ObservationUpdateBody)
+def update_observation(data: ObservationUpdateBody, obs_id):
     allowed = {'title', 'body', 'sentiment', 'tags', 'date', 'linked_chart_id'}
-    updates = {k: v for k, v in data.items() if k in allowed}
+    updates = {}
 
-    if 'sentiment' in updates:
-        if updates['sentiment'] not in VALID_SENTIMENTS:
-            return jsonify({'error': f'sentiment must be one of {VALID_SENTIMENTS}'}), 400
-
-    if 'tags' in updates:
-        if not isinstance(updates['tags'], list):
-            return jsonify({'error': 'tags must be a list'}), 400
-        updates['tags'] = json.dumps([str(t).strip() for t in updates['tags'] if str(t).strip()])
-
-    if 'body' in updates and not updates['body'].strip():
-        return jsonify({'error': 'body cannot be empty'}), 400
-
-    if not updates:
-        return jsonify({'error': 'No valid fields to update'}), 400
+    if data.title is not None:
+        updates['title'] = data.title
+    if data.body is not None:
+        updates['body'] = data.body
+    if data.sentiment is not None:
+        updates['sentiment'] = data.sentiment
+    if data.tags is not None:
+        updates['tags'] = json.dumps(data.tags)
+    if data.date is not None:
+        updates['date'] = data.date.isoformat()
+    if data.linked_chart_id is not None:
+        updates['linked_chart_id'] = data.linked_chart_id
 
     updates['updated_at'] = datetime.now(timezone.utc).isoformat()
     set_clause = ', '.join(f'{k} = %s' for k in updates)
